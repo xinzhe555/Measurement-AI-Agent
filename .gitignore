@@ -4,3 +4,4 @@ node_modules/
 .next/
 .env.production
 .env.local
+01_Data_Generation/
