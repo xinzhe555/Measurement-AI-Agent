@@ -1,0 +1,69 @@
+/* app/globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --ink-0: #060A0D;
+    --ink-1: #0A0F14;
+    --ink-2: #0F1720;
+    --ink-3: #141F2C;
+    --ink-4: #1A2840;
+    --line-0: #0E1A26;
+    --line-1: #162232;
+    --line-2: #1E3044;
+    --line-3: #2A4060;
+    --tx-hi:  #D6E8F5;
+    --tx-mid: #7A9BB8;
+    --tx-lo:  #3A5570;
+    --tx-off: #1E3248;
+    --sig-cyan:   #00CFFF;
+    --sig-teal:   #00E8D0;
+    --sig-lime:   #7EFF6E;
+    --sig-amber:  #FFB830;
+    --sig-red:    #FF4560;
+    --sig-violet: #C084FC;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+
+  /* CRT 掃描線紋理 */
+  /* body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.025) 2px, rgba(0,0,0,0.025) 4px
+    );
+  } */
+
+  /* 捲軸 */
+  ::-webkit-scrollbar       { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 2px; }
+}
+
+@layer utilities {
+  /* 訊息進場動畫 */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-rise { animation: rise 0.22s ease-out; }
+
+  /* 六角浮動 */
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(-6px); }
+  }
+  .animate-float { animation: float 4s ease-in-out infinite; }
+
+  /* LED 閃爍 */
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.25; }
+  }
+  .animate-blink { animation: blink 2s ease-in-out infinite; }
+}
