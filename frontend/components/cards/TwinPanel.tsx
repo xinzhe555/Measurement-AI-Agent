@@ -2,19 +2,23 @@
 import React, { useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { CardShell } from './_CardShell'
-import path from 'path'
 
 interface TwinPanelProps {
   onExportToAgent?: (chartData: any[], viewMode: string) => void
+  // 👈 新增接收來自 LeftPanel 的環境設定
+  pathType: string
+  viewMode: string
+  toolLength: number
 }
 
-export default function TwinPanel({ onExportToAgent }: TwinPanelProps) {
+export default function TwinPanel({ onExportToAgent, pathType, viewMode, toolLength }: TwinPanelProps) {
   const [activeTab, setActiveTab] = useState<'trans' | 'rot' | 'dims' | 'pdge'>('trans')
+  // params 移除了 path_type, view_mode, tool_length
   const [params, setParams] = useState({
     x_oc: 0, y_oc: -20, z_oc: 0, x_oa: 0, y_oa: 0, z_oa: 0,
     a_oc: 0, b_oc: 0, c_oc: 0, a_oa: 0, b_oa: 0, c_oa: 0,
     pivot_x: 0, pivot_y: 0, pivot_z: 50,
-    tool_length: 200, view_mode: 'relative', enable_pdge: false, path_type: 'cone',
+    enable_pdge: false
   })
   
   const [chartData, setChartData] = useState<any[]>([])
@@ -24,14 +28,21 @@ export default function TwinPanel({ onExportToAgent }: TwinPanelProps) {
   const handleSimulate = async () => {
     setIsLoading(true)
     try {
+      // 將自己的誤差參數與 LeftPanel 傳來的環境參數合併送出
+      const payload = {
+        ...params,
+        path_type: pathType,
+        view_mode: viewMode,
+        tool_length: toolLength
+      }
       const res = await fetch('http://localhost:8000/api/twin_simulate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       })
       const result = await res.json()
       if (result.status === 'success') {
         const { dx_um, dy_um, dz_um } = result.data
         const formattedData = dx_um.map((dx: number, i: number) => ({
-          index: i, dx: Number(dx.toFixed(2)), dy: Number(dy_um[i].toFixed(2)), dz: Number(dz_um[i].toFixed(2))
+          index: i, dx: Number(dx.toFixed(4)), dy: Number(dy_um[i].toFixed(2)), dz: Number(dz_um[i].toFixed(2))
         }))
         setChartData(formattedData)
         setIsModalOpen(true)
@@ -45,7 +56,7 @@ export default function TwinPanel({ onExportToAgent }: TwinPanelProps) {
 
   const handleExport = () => {
     if (onExportToAgent) {
-      onExportToAgent(chartData, params.view_mode)
+      onExportToAgent(chartData, viewMode)
     }
     setIsModalOpen(false)
   }
@@ -85,7 +96,7 @@ export default function TwinPanel({ onExportToAgent }: TwinPanelProps) {
         ))}
         <div className="col-span-2 mt-1">
           <p className="text-[9px] text-tx-lo leading-relaxed">
-            *樞紐尺寸代表量測球到各旋轉軸的實體距離。此參數將啟動阿貝效應，影響角度誤差(AOC/BOC)的投影波型。
+            *樞紐尺寸為機台旋轉中心偏移。阿貝效應將由外部「刀長 L」與球心座標共同決定。
           </p>
         </div>
       </div>
@@ -106,7 +117,6 @@ export default function TwinPanel({ onExportToAgent }: TwinPanelProps) {
       <CardShell titleText="數位孿生生成器" titleColor="text-tx-hi" accentColor="#00CFFF" badge="Twin" badgeStyle="bg-sig-cyan/20 text-sig-cyan">
         <div className="p-3 flex flex-col gap-3">
           
-          {/* 分類標籤 Tabs */}
           <div className="flex gap-1 border-b border-line-1 pb-1">
             <button onClick={() => setActiveTab('trans')} className={`text-[9px] px-2 py-1 rounded transition ${activeTab === 'trans' ? 'bg-sig-cyan/20 text-sig-cyan' : 'text-tx-lo hover:text-tx-mid'}`}>平移</button>
             <button onClick={() => setActiveTab('rot')} className={`text-[9px] px-2 py-1 rounded transition ${activeTab === 'rot' ? 'bg-sig-cyan/20 text-sig-cyan' : 'text-tx-lo hover:text-tx-mid'}`}>旋轉</button>
@@ -116,36 +126,10 @@ export default function TwinPanel({ onExportToAgent }: TwinPanelProps) {
 
           {renderInputs()}
 
-          {/* 共通設定區 */}
-          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-line-1">
-            {/* 1. 軌跡類型 */}
-            <div>
-              <label className="block text-tx-mid text-[9px] mb-0.5 font-mono">軌跡類型</label>
-              <select className="w-full bg-ink-1 border border-line-1 text-tx-hi text-[10px] rounded px-1.5 py-1"
-                value={params.path_type} onChange={e => setParams({...params, path_type: e.target.value})}>
-                <option value="cone">NAS 979 圓錐 (A:0-90-0)</option>
-                <option value="sine">正弦同動 (A:±30° C:±90°)</option>
-              </select>
-            </div>
-            {/* 2. 刀長 */}
-            <div>
-              <label className="block text-tx-mid text-[9px] mb-0.5 font-mono">刀長/半徑 (mm)</label>
-              <input type="number" className="w-full bg-ink-1 border border-line-1 text-tx-hi text-[10px] rounded px-1.5 py-1"
-                value={params.tool_length} onChange={e => setParams({...params, tool_length: Number(e.target.value)})} />
-            </div>
-            {/* 3. 視角 */}
-            <div>
-              <label className="block text-tx-mid text-[9px] mb-0.5 font-mono">觀測視角</label>
-              <select className="w-full bg-ink-1 border border-line-1 text-tx-hi text-[10px] rounded px-1.5 py-1"
-                value={params.view_mode} onChange={e => setParams({...params, view_mode: e.target.value})}>
-                <option value="relative">儀器投影 (Relative)</option>
-                <option value="absolute">絕對幾何 (Absolute)</option>
-              </select>
-            </div>
-          </div>
+          {/* 共通設定區已移除，由外部環境設定區控制 */}
 
           <button onClick={handleSimulate} disabled={isLoading} className="w-full mt-1 py-1.5 font-mono text-[10px] rounded border border-sig-cyan/30 text-sig-cyan bg-sig-cyan/5 hover:bg-sig-cyan/15 transition disabled:opacity-50">
-            {isLoading ? '生成中...' : '▶ 執行軌跡生成'}
+            {isLoading ? '生成中...' : '▶ 執行軌跡圖形預覽'}
           </button>
         </div>
       </CardShell>
@@ -174,7 +158,6 @@ export default function TwinPanel({ onExportToAgent }: TwinPanelProps) {
               </ResponsiveContainer>
             </div>
             
-            {/* 匯入 Agent 的魔術按鈕 */}
             <button 
               onClick={handleExport}
               className="mt-6 w-full py-3 bg-sig-cyan text-ink-1 text-sm font-bold tracking-widest rounded shadow-[0_0_15px_rgba(0,207,255,0.4)] hover:bg-opacity-90 transition"

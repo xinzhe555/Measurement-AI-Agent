@@ -14,6 +14,8 @@ class AnalyzeRequest(BaseModel):
       2. 給 inject_params（用模擬器生成數據，Demo 用）
     """
     mode: str = Field("simulate", description="'simulate' | 'upload'")
+    path_type: str = Field("cone", description="軌跡類型: 'cone' | 'sine' | 'custom'")
+    view_mode: str = Field("relative", description="觀測視角: 'relative' | 'absolute'")
     ball_x: float = Field(200.0, description="量測球初始 X 坐標 (mm)")
     ball_y: float = Field(0.0, description="量測球初始 Y 坐標 (mm)")
     ball_z: float = Field(0.0, description="量測球初始 Z 坐標 (mm)")

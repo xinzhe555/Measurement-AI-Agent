@@ -25,10 +25,12 @@ async def analyze(req: AnalyzeRequest):
     try:
         if req.mode == "simulate":
             result = run_full_analysis(
-                ball_x=req.ball_x,             # 修正：帶入新坐標參數
+                ball_x=req.ball_x,             
                 ball_y=req.ball_y,
                 ball_z=req.ball_z,
-                tool_length=req.tool_length,   # 修正：帶入刀長
+                tool_length=req.tool_length,  
+                path_type=req.path_type,
+                view_mode=req.view_mode, 
                 inject_xoc=req.inject_xoc,
                 inject_yoc=req.inject_yoc,
                 inject_aoc=req.inject_aoc,
@@ -48,10 +50,12 @@ async def analyze(req: AnalyzeRequest):
                 )
             measured = np.column_stack([req.dx, req.dy, req.dz])
             result = run_full_analysis(
-                ball_x=req.ball_x,             # 修正：帶入新坐標參數
+                ball_x=req.ball_x,             
                 ball_y=req.ball_y,
                 ball_z=req.ball_z,
-                tool_length=req.tool_length,   # 修正：帶入刀長
+                tool_length=req.tool_length,   
+                path_type=req.path_type,
+                view_mode=req.view_mode,
                 run_ai=req.run_ai_layer,
                 measured_error=measured,
                 a_cmd_ext=np.array(req.a_cmd),

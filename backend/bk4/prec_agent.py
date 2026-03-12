@@ -291,7 +291,7 @@ class ToolExecutor:
         try:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             from generator          import Integrated_BK4_Simulator
-            from physical_analyzer  import PhysicalLayerAnalyzer
+            from backend.bk4.static_analyzer  import PhysicalLayerAnalyzer
 
             if mode == 'simulate' or self.memory['a_cmd'] is None:
                 sim  = Integrated_BK4_Simulator()

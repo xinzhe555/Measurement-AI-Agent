@@ -15,6 +15,9 @@ export function LeftPanel({ analysis, isAnalyzing, onAnalyze, onExportToAgent }:
   const p = analysis?.pige
   const d = analysis?.pdge
 
+  // 1. 集中管理所有數位孿生環境參數
+  const [pathType, setPathType] = useState<string>('cone')
+  const [viewMode, setViewMode] = useState<string>('relative')
   const [ballX, setBallX] = useState<number>(200.0)
   const [ballY, setBallY] = useState<number>(0.0)
   const [ballZ, setBallZ] = useState<number>(0.0)
@@ -51,9 +54,14 @@ export function LeftPanel({ analysis, isAnalyzing, onAnalyze, onExportToAgent }:
       {/* 內容捲動區 */}
       <div className="flex-1 overflow-y-auto scrollbar-custom flex flex-col">
         
-        {/* === 新增的數位孿生卡片 === */}
+        {/* === 數位孿生卡片 === */}
         <div className="p-3 border-b border-line-0">
-          <TwinPanel onExportToAgent={onExportToAgent} />
+          <TwinPanel 
+            onExportToAgent={onExportToAgent}
+            pathType={pathType} 
+            viewMode={viewMode} 
+            toolLength={toolLen}
+          />
         </div>
 
         {/* 4格儀表 */}
@@ -146,28 +154,53 @@ export function LeftPanel({ analysis, isAnalyzing, onAnalyze, onExportToAgent }:
           {analysis ? `DX ${analysis.rms.phys_improvement_dx_pct}% / DZ ${analysis.rms.phys_improvement_dz_pct}%` : '等待分析'}
         </div>
 
-        {/* 修正：輸入框拉到外層正確位置 */}
-        <div className="w-full mb-2 grid grid-cols-2 gap-2 text-[10px] font-mono">
-            <label className="flex flex-col gap-1 text-tx-lo">
-                球心 X (mm)
-                <input type="number" step="0.1" value={ballX} onChange={e=>setBallX(Number(e.target.value))} 
-                       className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan" />
-            </label>
-            <label className="flex flex-col gap-1 text-tx-lo">
-                球心 Y (mm)
-                <input type="number" step="0.1" value={ballY} onChange={e=>setBallY(Number(e.target.value))} 
-                       className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan" />
-            </label>
-            <label className="flex flex-col gap-1 text-tx-lo">
-                球心 Z (mm)
-                <input type="number" step="0.1" value={ballZ} onChange={e=>setBallZ(Number(e.target.value))} 
-                       className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan" />
-            </label>
-            <label className="flex flex-col gap-1 text-tx-lo">
-                刀長 (mm)
-                <input type="number" step="0.1" value={toolLen} onChange={e=>setToolLen(Number(e.target.value))} 
-                       className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan" />
-            </label>
+        {/* 2. 全新的「量測環境設定區」整合版 */}
+        <div className="w-full mb-3 flex flex-col gap-2 text-[10px] font-mono border-t border-line-0 pt-3">
+            <div className="text-[11px] text-tx-hi font-bold mb-1">⚙️ 量測環境設定</div>
+            
+            {/* 軌跡與視角選擇 (取代 TwinPanel 的選項) */}
+            <div className="grid grid-cols-2 gap-2 mb-1">
+              <label className="flex flex-col gap-1 text-tx-lo">
+                軌跡類型
+                <select value={pathType} onChange={e=>setPathType(e.target.value)}
+                        className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan">
+                  <option value="cone">BK4 圓錐</option>
+                  <option value="sine">S 型曲線</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-tx-lo">
+                觀測視角
+                <select value={viewMode} onChange={e=>setViewMode(e.target.value)}
+                        className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan">
+                  <option value="relative">相對 (LRT)</option>
+                  <option value="absolute">絕對 (機台)</option>
+                </select>
+              </label>
+            </div>
+
+        {/* 座標與刀長設定 */}
+            <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1 text-tx-lo">
+                    球心 X (mm)
+                    <input type="number" step="10" value={ballX} onChange={e=>setBallX(Number(e.target.value))} 
+                           className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan" />
+                </label>
+                <label className="flex flex-col gap-1 text-tx-lo">
+                    球心 Y (mm)
+                    <input type="number" step="10" value={ballY} onChange={e=>setBallY(Number(e.target.value))} 
+                           className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan" />
+                </label>
+                <label className="flex flex-col gap-1 text-tx-lo">
+                    球心 Z (mm)
+                    <input type="number" step="10" value={ballZ} onChange={e=>setBallZ(Number(e.target.value))} 
+                           className="bg-ink-2 border border-line-0 p-1 rounded text-tx-hi outline-none focus:border-sig-cyan" />
+                </label>
+                <label className="flex flex-col gap-1 text-tx-lo font-bold text-sig-amber">
+                    刀長 L (mm)
+                    <input type="number" step="10" value={toolLen} onChange={e=>setToolLen(Number(e.target.value))} 
+                           className="bg-ink-2 border border-sig-amber/50 p-1 rounded text-tx-hi outline-none focus:border-sig-amber" />
+                </label>
+            </div>
         </div>
 
         {/* 開始分析按鈕 */}
@@ -175,18 +208,20 @@ export function LeftPanel({ analysis, isAnalyzing, onAnalyze, onExportToAgent }:
           disabled={isAnalyzing}
           onClick={() => onAnalyze({ 
             mode: 'simulate', 
+            path_type: pathType,   
+            view_mode: viewMode,   
             ball_x: ballX, 
             ball_y: ballY, 
             ball_z: ballZ, 
             tool_length: toolLen,
             run_ai_layer: true 
           })}
-          className="mt-1 w-full py-1.5 font-mono text-[10px] tracking-widest uppercase
-                     rounded border transition-all
+          className="w-full py-2 font-mono text-[11px] tracking-widest uppercase
+                     rounded border transition-all font-bold
                      disabled:opacity-40 disabled:cursor-not-allowed
-                     border-sig-cyan/30 text-sig-cyan bg-sig-cyan/5
-                     hover:bg-sig-cyan/15 hover:border-sig-cyan/60">
-          {isAnalyzing ? '分析中...' : '▶  開始分析'}
+                     border-sig-cyan/50 text-sig-cyan bg-sig-cyan/10
+                     hover:bg-sig-cyan/20 hover:border-sig-cyan">
+          {isAnalyzing ? '分析中...' : '▶  執行數位孿生分析'}
         </button>
       </div>
     </aside>

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'bk4'))
 from bk4.pige_full_generator import BK4_Full_PIGE_Generator
 from bk4.pdge_generator import Physical_PDGE_Generator
 from bk4.generator import Integrated_BK4_Simulator
-from bk4.physical_analyzer import PhysicalLayerAnalyzer, AgentDiagnosticReport
+from bk4.static_analyzer import PhysicalLayerAnalyzer, AgentDiagnosticReport
 from bk4.ai_residual_learner import AIResidualLearner, inject_nonlinear_residuals
 
 from schemas.response import (
@@ -23,12 +23,13 @@ from schemas.response import (
     RmsComparison, DiagnosticFinding
 )
 
-
 def run_full_analysis(
     ball_x: float = 200.0,      
     ball_y: float = 0.0,         
     ball_z: float = 0.0,        
     tool_length: float = 0.0,   
+    path_type: str = "cone",       
+    view_mode: str = "relative",  
     inject_xoc: float = 0.050,
     inject_yoc: float = -0.020,
     inject_aoc: float = 0.0003,
@@ -59,11 +60,15 @@ def run_full_analysis(
                                inject_exc, inject_eyc, inject_ezc)
         sim = Integrated_BK4_Simulator(config)
 
+        # 將所有前端環境參數完整傳遞給生成器，並啟動 PDGE
         raw_error, a_cmd, c_cmd = sim.generate(
             ball_x=ball_x, 
             ball_y=ball_y, 
             ball_z=ball_z, 
-            pivot_z=tool_length
+            pivot_z=tool_length,
+            path_type=path_type,     
+            view_mode=view_mode,     
+            enable_pdge=True         
         )
     else:
         # upload 模式：直接使用上傳的數據
@@ -99,7 +104,9 @@ def run_full_analysis(
         mlp.train(a_cmd, c_cmd, train_target, verbose=False)
         ai_pred = mlp.predict(a_cmd, c_cmd)
         final_residual = phys_residual - ai_pred
-        ai_r2 = float(mlp.r2_score) if hasattr(mlp, 'r2_score') else None
+        
+        # 修正：ai_residual_learner.py 裡面定義的是 train_r2，不是 r2_score
+        ai_r2 = float(mlp.train_r2) if hasattr(mlp, 'train_r2') and mlp.train_r2 is not None else None
 
     rms_ai = np.sqrt(np.mean(final_residual**2, axis=0)) * 1e6
 
@@ -148,7 +155,7 @@ def _build_config(xoc, yoc, aoc, boa, exc, eyc, ezc):
 
 
 def _build_pige_result(params, inj_xoc, inj_yoc, inj_aoc, inj_boa) -> PigeResult:
-    to_um   = lambda v: round(float(v) * 1e6, 2)
+    to_um   = lambda v: round(float(v) * 1e6, 4)
     to_mrad = lambda v: round(float(v) * 1e3, 4)
     pct = lambda identified, injected: (
         round(abs(identified - injected) / abs(injected) * 100, 1)
@@ -184,15 +191,15 @@ def _build_pdge_result(params) -> PdgeResult:
 def _build_rms_comparison(before, phys, ai) -> RmsComparison:
     imp = lambda b, a: round((1 - a/b) * 100, 1) if b > 0 else 0.0
     return RmsComparison(
-        before_dx_um=round(float(before[0]), 2),
-        before_dy_um=round(float(before[1]), 2),
-        before_dz_um=round(float(before[2]), 2),
-        after_phys_dx_um=round(float(phys[0]), 3),
-        after_phys_dy_um=round(float(phys[1]), 3),
-        after_phys_dz_um=round(float(phys[2]), 3),
-        after_ai_dx_um=round(float(ai[0]), 3),
-        after_ai_dy_um=round(float(ai[1]), 3),
-        after_ai_dz_um=round(float(ai[2]), 3),
+        before_dx_um=round(float(before[0]), 4),
+        before_dy_um=round(float(before[1]), 4),
+        before_dz_um=round(float(before[2]), 4),
+        after_phys_dx_um=round(float(phys[0]), 4),
+        after_phys_dy_um=round(float(phys[1]), 4),
+        after_phys_dz_um=round(float(phys[2]), 4),
+        after_ai_dx_um=round(float(ai[0]), 4),
+        after_ai_dy_um=round(float(ai[1]), 4),
+        after_ai_dz_um=round(float(ai[2]), 4),
         phys_improvement_dx_pct=imp(before[0], phys[0]),
         phys_improvement_dy_pct=imp(before[1], phys[1]),
         phys_improvement_dz_pct=imp(before[2], phys[2]),

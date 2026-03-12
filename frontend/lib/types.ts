@@ -64,6 +64,8 @@ export interface AnalyzeResponse {
 
 export interface AnalyzeRequest {
   mode: 'simulate' | 'upload'
+  path_type?: string
+  view_mode?: string
   ball_x?: number
   ball_y?: number
   ball_z?: number
