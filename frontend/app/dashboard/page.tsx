@@ -78,9 +78,12 @@ export default function Dashboard() {
     // 2. 自動背景呼叫 Agent 進行盲解
     try {
       const res = await sendChat({
-        message: `我已經匯入了一組數位孿生模擬的軌跡波型 (模式: ${modeName})，並已存入後端暫存檔。請幫我分析這組數據背後的幾何誤差根因。`,
+        message: `我已經匯入了一組數位孿生模擬的軌跡波型 (模式: ${modeName})，共 ${chartData.length} 個採樣點。請直接對這組數據執行 HTM 物理層辨識，逆向分析出 PIGE/PDGE 幾何誤差根因。`,
         session_id: sessionId,
-        context: analysis ? { last_analysis: analysis } : null,
+        context: {
+          ...(analysis ? { last_analysis: analysis } : {}),
+          twin_chart_data: chartData,  // 直接傳入圖表數據 {a_axis, c_axis, dx, dy, dz}（μm）
+        },
       })
       
       const sysMsg: ChatMessage = {

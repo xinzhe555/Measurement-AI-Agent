@@ -17,10 +17,10 @@ export function PigeResultCard({ pige }: { pige: PigeResult }) {
         <Metric label="XOC" value={sign(pige.xoc_um)} unit="μm"
           sub={pige.xoc_error_pct ? `識別誤差 ${pige.xoc_error_pct}%` : undefined}
           valueColor={pige.xoc_error_pct && pige.xoc_error_pct > 10 ? 'text-sig-amber' : 'text-sig-lime'}/>
-        <Metric label="AOC" value={sign(pige.aoc_mrad)} unit="mr"
+        <Metric label="AOC" value={sign(pige.aoc_deg)} unit="deg"
           sub={pige.aoc_error_pct ? `識別誤差 ${pige.aoc_error_pct}%` : undefined}
           valueColor="text-sig-lime"/>
-        <Metric label="BOA" value={sign(pige.boa_mrad)} unit="mr"
+        <Metric label="BOA" value={sign(pige.boa_deg)} unit="deg"
           sub={pige.boa_error_pct ? `識別誤差 ${pige.boa_error_pct}%` : undefined}
           valueColor="text-sig-lime"/>
       </div>
@@ -34,11 +34,11 @@ export function PigeResultCard({ pige }: { pige: PigeResult }) {
           barPct={(Math.abs(pige.yoc_um)/20)*100} barColor="#7EFF6E"
           val={`${sign(pige.yoc_um)} μm`} valColor="#7EFF6E"/>
         <ErrRow sym="AOC" symColor="#FF4560" desc="C/A 垂直度（阿貝放大）"
-          barPct={(Math.abs(pige.aoc_mrad)/0.3)*100} barColor="#FF4560"
-          val={`${sign(pige.aoc_mrad)} mr`} valColor="#FF4560"/>
+          barPct={(Math.abs(pige.aoc_deg)/0.3)*100} barColor="#FF4560"
+          val={`${sign(pige.aoc_deg)} deg`} valColor="#FF4560"/>
         <ErrRow sym="BOA" symColor="#FFB830" desc="A軸歪斜（yaw）"
-          barPct={(Math.abs(pige.boa_mrad)/0.2)*100} barColor="#FFB830"
-          val={`${sign(pige.boa_mrad)} mr`} valColor="#FFB830"/>
+          barPct={(Math.abs(pige.boa_deg)/0.2)*100} barColor="#FFB830"
+          val={`${sign(pige.boa_deg)} deg`} valColor="#FFB830"/>
       </div>
     </CardShell>
   )

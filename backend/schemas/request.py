@@ -19,13 +19,14 @@ class AnalyzeRequest(BaseModel):
     ball_x: float = Field(200.0, description="量測球初始 X 坐標 (mm)")
     ball_y: float = Field(0.0, description="量測球初始 Y 坐標 (mm)")
     ball_z: float = Field(0.0, description="量測球初始 Z 坐標 (mm)")
-    tool_length: float = Field(0.0, description="刀具長度/主軸Z向偏移 (mm)")
+    pivot_z: float = Field(0.0, description="A軸旋轉中心到C軸轉盤面的固定幾何距離 (mm)")
+    tool_length: float = Field(0.0, description="LRT刀長 (mm)")
 
     # ── simulate 模式用 ──
     inject_xoc:  Optional[float] = Field(0.050,   description="注入 XOC (m)")
     inject_yoc:  Optional[float] = Field(-0.020,  description="注入 YOC (m)")
-    inject_aoc:  Optional[float] = Field(0.0003,  description="注入 AOC (rad)")
-    inject_boa:  Optional[float] = Field(0.0002,  description="注入 BOA (rad)")
+    inject_aoc:  Optional[float] = Field(0.0003,  description="注入 AOC (rad — 內部單位)")
+    inject_boa:  Optional[float] = Field(0.0002,  description="注入 BOA (rad — 內部單位)")
     inject_exc:  Optional[float] = Field(10e-6,   description="注入 EXC 振幅 (m)")
     inject_eyc:  Optional[float] = Field(10e-6,   description="注入 EYC 振幅 (m)")
     inject_ezc:  Optional[float] = Field(5e-6,    description="注入 EZC 振幅 (m)")

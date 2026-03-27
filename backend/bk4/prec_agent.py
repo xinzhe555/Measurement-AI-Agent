@@ -26,6 +26,7 @@ import sys
 import numpy as np
 from pathlib import Path
 from typing import Any
+from bk4.rag_engine import ManualRetriever
 
 # ── 載入 .env：從此檔案往上找，直到找到 .env 為止（最多 4 層）
 from dotenv import load_dotenv
@@ -237,6 +238,32 @@ TOOL_DEFINITIONS = [
         }
     }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_equipment_knowledge",
+            "description": (
+                "檢索外部知識庫（GraphRAG），用於回答機台操作、儀器架設（如 LRT、Ball Bar）、"
+                "以及控制器參數設定（如 Heidenhain、Siemens）的問題。"
+                "此工具會回傳標準操作步驟與對應的機台/軟體畫面圖片路徑。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "使用者的具體問題，例如：'LRT C軸如何對位？' 或 '海德漢測試路徑怎麼開？'"
+                    },
+                    "equipment_type": {
+                        "type": "string",
+                        "enum": ["LRT", "BallBar", "Heidenhain", "Siemens", "Fanuc", "Other"],
+                        "description": "判斷使用者正在詢問哪種設備或控制器"
+                    }
+                },
+                "required": ["query", "equipment_type"]
+            }
+        }
+    },
 ]
 
 
@@ -267,6 +294,13 @@ class ToolExecutor:
         # 誤差物理知識庫
         self._error_kb = self._build_error_knowledge_base()
 
+        try:
+            self.rag_retriever = ManualRetriever(data_dir="rag_data")
+            self.has_rag = True
+        except Exception as e:
+            print(f"RAG 初始化失敗 (請確認 index.faiss 是否建立): {e}")
+            self.has_rag = False
+
     def execute(self, tool_name: str, tool_input: dict) -> dict:
         """分發工具呼叫"""
         dispatch = {
@@ -276,6 +310,7 @@ class ToolExecutor:
             'get_error_explanation':    self._get_error_explanation,
             'recommend_instruments':    self._recommend_instruments,
             'estimate_compensation_effect': self._estimate_compensation_effect,
+            'query_equipment_knowledge': self._query_equipment_knowledge,
         }
         fn = dispatch.get(tool_name)
         if fn is None:
@@ -288,49 +323,128 @@ class ToolExecutor:
     # ── 工具 1：物理層分析 ──────────────────────────────────────
 
     def _run_physical_analysis(self, mode='simulate', focus='all') -> dict:
+        import pandas as pd
+        import json as _json
+
+        _bk4_dir     = os.path.dirname(os.path.abspath(__file__))
+        _backend_dir = os.path.abspath(os.path.join(_bk4_dir, '..'))
+        CSV_PATH     = os.path.join(_backend_dir, 'simulated_temp_data.csv')
+        META_PATH    = os.path.join(_backend_dir, 'simulated_temp_meta.json')
+
+        sys.path.insert(0, _bk4_dir)
+
         try:
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from generator          import Integrated_BK4_Simulator
-            from backend.bk4.static_analyzer  import PhysicalLayerAnalyzer
+            from static_analyzer import PhysicalLayerAnalyzer
 
-            if mode == 'simulate' or self.memory['a_cmd'] is None:
-                sim  = Integrated_BK4_Simulator()
-                data, a_cmd, c_cmd = sim.generate(
-                    ball_x=200.0, ball_y=0.0, ball_z=0.0, pivot_z=0.0
-                )
-                self.memory['a_cmd'] = a_cmd
-                self.memory['c_cmd'] = c_cmd
+            measured_error = None
+            a_cmd = c_cmd = None
+            ball_x, ball_y, ball_z, pivot_z, tool_length = 200.0, 0.0, 0.0, 0.0, 0.0
+            data_source = 'unknown'
+
+            # ── 優先級 1：使用 use_current 或 Agent 記憶體中已有的分析數據 ──
+            if mode == 'use_current' and self.memory.get('a_cmd') is not None:
+                measured_error = self.memory.get('raw_data')
+                a_cmd          = self.memory['a_cmd']
+                c_cmd          = self.memory['c_cmd']
+                data_source    = 'memory'
+
+            # ── 優先級 2：直接從前端匯入的 TwinPanel 圖表數據（經 API context 傳入）──
+            elif self.memory.get('twin_chart_data'):
+                chart = self.memory['twin_chart_data']
+                a_cmd = np.deg2rad([p['a_axis'] for p in chart])
+                c_cmd = np.deg2rad([p['c_axis'] for p in chart])
+                # 前端 chartData 中 dx/dy/dz 單位為 μm，轉回 mm 供辨識器使用
+                measured_error = np.column_stack([
+                    [p['dx'] for p in chart],
+                    [p['dy'] for p in chart],
+                    [p['dz'] for p in chart],
+                ])
+                # 讀取機台幾何參數 meta（若存在）
+                if os.path.exists(META_PATH):
+                    with open(META_PATH, 'r') as _f:
+                        meta = _json.load(_f)
+                    ball_x      = meta.get('ball_x', 200.0)
+                    ball_y      = meta.get('ball_y', 0.0)
+                    ball_z      = meta.get('ball_z', 0.0)
+                    pivot_z     = meta.get('pivot_z', 0.0)
+                    tool_length = meta.get('tool_length', 0.0)
+                data_source = 'twin_chart'
+
             else:
-                data  = self.memory.get('raw_data')
-                a_cmd = self.memory['a_cmd']
-                c_cmd = self.memory['c_cmd']
+                # ── 優先級 3：讀取後端 CSV 暫存檔（/api/twin_simulate 寫入）──
+                if os.path.exists(CSV_PATH):
+                    df    = pd.read_csv(CSV_PATH)
+                    a_cmd = np.deg2rad(df['A'].values)
+                    c_cmd = np.deg2rad(df['C'].values)
+                    # CSV 中 X/Y/Z 單位為 mm
+                    measured_error = np.column_stack([
+                        df['X'].values, df['Y'].values, df['Z'].values
+                    ])
+                    if os.path.exists(META_PATH):
+                        with open(META_PATH, 'r') as _f:
+                            meta = _json.load(_f)
+                        ball_x      = meta.get('ball_x', 200.0)
+                        ball_y      = meta.get('ball_y', 0.0)
+                        ball_z      = meta.get('ball_z', 0.0)
+                        pivot_z     = meta.get('pivot_z', 0.0)
+                        tool_length = meta.get('tool_length', 0.0)
+                    data_source = 'csv'
 
+                # ── 優先級 4：無數據時 fallback 到重新 generate ──
+                if measured_error is None:
+                    from generator import Integrated_BK4_Simulator
+                    sim = Integrated_BK4_Simulator()
+                    measured_error, a_cmd, c_cmd = sim.generate(
+                        ball_x=ball_x, ball_y=ball_y, ball_z=ball_z,
+                        pivot_z=pivot_z, tool_length=tool_length
+                    )
+                    data_source = 'generated'
+
+            # 存入 Agent 記憶體供後續工具使用
+            self.memory['a_cmd']    = a_cmd
+            self.memory['c_cmd']    = c_cmd
+            self.memory['raw_data'] = measured_error
+
+            print(f"[DEBUG] data_source = {data_source}")
+            print(f"[DEBUG] pivot_z used = {pivot_z}")
+            print(f"[DEBUG] measured_error max = {np.abs(measured_error).max():.6f}")
+
+
+            # ── 執行 HTM 非線性最小二乘逆向辨識 ────────────────────
             analyzer = PhysicalLayerAnalyzer()
             params, residual = analyzer.identify(
-                data, a_cmd, c_cmd, 
-                ball_x=200.0, ball_y=0.0, ball_z=0.0, tool_length=0.0, 
+                measured_error, a_cmd, c_cmd,
+                ball_x=ball_x, ball_y=ball_y, ball_z=ball_z,
+                pivot_z=pivot_z, tool_length=tool_length,
                 verbose=False
             )
 
-            rms_before = np.sqrt(np.mean(data**2, axis=0)) * 1000
+            rms_before = np.sqrt(np.mean(measured_error**2, axis=0)) * 1000  # mm → μm
             rms_after  = np.sqrt(np.mean(residual**2, axis=0)) * 1000
 
             result = {
-                'status': 'success',
+                'status':      'success',
+                'data_source': data_source,
+                'n_points':    int(len(a_cmd)),
                 'pige': {
-                    'X_OC_um': round(params['X_OC'] * 1000, 2),
-                    'Y_OC_um': round(params['Y_OC'] * 1000, 2),
-                    'A_OC_mrad': round(params['A_OC'] * 1000, 4),
-                    'B_OC_mrad': round(params['B_OC'] * 1000, 4),
-                    'B_OA_mrad': round(params['B_OA'] * 1000, 4),
+                    'X_OC_um':   round(params['X_OC'] * 1000, 2),
+                    'Y_OC_um':   round(params['Y_OC'] * 1000, 2),
+                    'Z_OC_um':   round(params['Z_OC'] * 1000, 2),
+                    'X_OA_um':   round(params['X_OA'] * 1000, 2),
+                    'Y_OA_um':   round(params['Y_OA'] * 1000, 2),
+                    'Z_OA_um':   round(params['Z_OA'] * 1000, 2),
+                    'A_OC_deg': round(np.degrees(params['A_OC']), 4),
+                    'B_OC_deg': round(np.degrees(params['B_OC']), 4),
+                    'B_OA_deg': round(np.degrees(params['B_OA']), 4),
+                    'C_OA_deg': round(np.degrees(params['C_OA']), 4),
                 },
                 'pdge': {
-                    'EXC_amp_um':   round(params['Runout_X_Amp'] * 1000, 3),
+                    'EXC_amp_um':    round(params['Runout_X_Amp'] * 1000, 3),
                     'EXC_phase_deg': round(np.degrees(params['Runout_X_Phase']), 1),
-                    'EYC_amp_um':   round(params['Runout_Y_Amp'] * 1000, 3),
+                    'EYC_amp_um':    round(params['Runout_Y_Amp'] * 1000, 3),
                     'EYC_phase_deg': round(np.degrees(params['Runout_Y_Phase']), 1),
-                    'EZC_amp_um':   round(params['Runout_Z_Amp'] * 1000, 3),
-                    'EZC_freq':     round(params['Runout_Z_Freq'], 2),
+                    'EZC_amp_um':    round(params['Runout_Z_Amp'] * 1000, 3),
+                    'EZC_freq':      round(params['Runout_Z_Freq'], 2),
                 },
                 'rms': {
                     'before_um': rms_before.round(3).tolist(),
@@ -349,27 +463,10 @@ class ToolExecutor:
 
         except Exception as e:
             result = {
-                'status': 'simulated_fallback',
-                'note': f'無法載入 Python 模組（{e}），回傳示意數值',
-                'pige': {
-                    'X_OC_um': 43.8, 'Y_OC_um': -19.6,
-                    'A_OC_mrad': 0.302, 'B_OC_mrad': 0.015, 'B_OA_mrad': 0.197
-                },
-                'pdge': {
-                    'EXC_amp_um': 10.02, 'EXC_phase_deg': -1.9,
-                    'EYC_amp_um': 9.59,  'EYC_phase_deg': 88.2,
-                    'EZC_amp_um': 0.78,  'EZC_freq': 2.0,
-                },
-                'rms': {
-                    'before_um': [56.0, 23.4, 53.2],
-                    'after_um':  [1.81, 1.70, 0.95],
-                    'improvement_pct': [96.8, 92.7, 98.2],
-                },
-                'needs_gravity_check': True,
-                'needs_ai': True,
+                'status': 'error',
+                'error':  str(e),
+                'note':   '物理層辨識失敗，請確認 static_analyzer.py 是否存在，以及量測數據格式是否正確。',
             }
-            self.memory['has_analysis'] = True
-            self.memory['analysis_result'] = result
 
         return result
 
@@ -514,7 +611,7 @@ class ToolExecutor:
             'LRT': {
                 'name': 'Laser R-Test (LRT)',
                 'measures': ['XOC', 'YOC', 'AOC', 'BOA', 'EXC', 'EYC', 'EZC', 'EAC', 'EBC'],
-                'accuracy': '< 1 μm / 0.01 mrad',
+                'accuracy': '< 1 μm / 0.0006°',
                 'time': '約 2 小時',
                 'priority': 1,
                 'budget': ['standard', 'full'],
@@ -532,7 +629,7 @@ class ToolExecutor:
             'Autocollimator': {
                 'name': '電子式自準直儀',
                 'measures': ['AOC', 'BOA', 'gravity'],
-                'accuracy': '< 0.005 mrad',
+                'accuracy': '< 0.0003°',
                 'time': '約 1 小時',
                 'priority': 3,
                 'budget': ['standard', 'full'],
@@ -635,6 +732,35 @@ class ToolExecutor:
             )
         }
 
+    # ── 工具 7：真實 GraphRAG 知識檢索 ──────────────────────
+    def _query_equipment_knowledge(self, query: str, equipment_type: str) -> dict:
+        """
+        使用 FAISS 向量檢索與 Neo4j 圖譜檢索真實的手冊圖文。
+        """
+        if not self.has_rag:
+            return {'status': 'error', 'retrieved_info': "RAG 系統尚未初始化，請先建立 Vector DB。"}
+            
+        search_result = self.rag_retriever.retrieve(query=query, top_k=1)
+        
+        if search_result['status'] == 'success':
+            # 🌟 秘訣 1：將原始日誌偷偷存進 Agent 的記憶體中，不讓 LLM 花時間重複生成
+            self.memory['last_rag_log'] = search_result['retrieved_info']
+
+            # 🌟 秘訣 2：給 Agent 的指令專注於「統整與解說」
+            final_output = f"""
+            【系統底層檢索資料 (含 FAISS 原始文本與 Neo4j 因果邏輯)】
+            {search_result['retrieved_info']}
+
+            【Agent 統整任務指令 (CRITICAL)】
+            1. 請扮演專業的工具機工程師，吸收上述資料後，用自然、流暢且具備邏輯的語氣回答使用者的問題。
+            2. 你必須將「系統底層因果邏輯分析」的內容，自然地揉合進你的步驟解說中。不要生硬地列出「原因：...」，而是要說「為了...，我們需要...」。
+            3. ⚠️ 圖片保留指令：你必須在解說的適當段落，原封不動地插入上述資料中的 Markdown 圖片語法 (即 `![](/images/rag/...)`)。
+            4. 注意：你「不需要」在回答中印出原始的檢索日誌，系統會在背景自動處理。
+            """
+            return {'status': 'success', 'retrieved_info': final_output}
+        else:
+            return search_result
+        
     # ── 知識庫建構 ──────────────────────────────────────────────
 
     def _build_error_knowledge_base(self) -> dict:
@@ -668,11 +794,11 @@ class ToolExecutor:
                 'physical_cause': 'C 軸旋轉面相對 A 軸旋轉面的傾斜角',
                 'effect_on_tcp': (
                     '最危險的誤差項：阿貝放大效應使 Z 向誤差 = A_OC × R，'
-                    'R=200mm 時 0.1mrad → 20μm Z 向誤差'
+                    'R=200mm 時 0.006° → 20μm Z 向誤差'
                 ),
                 'measurement': 'LRT + 自準直儀雙重確認',
                 'compensation': 'HTM 模型 A_OC 項補償',
-                'typical_value_mrad': '0.05~0.5',
+                'typical_value_deg': '0.003~0.029',
                 'interaction': '與量測球半徑 R 呈線性放大關係，是最需要補償的 PIGE 項',
             },
             'BOA': {
@@ -683,7 +809,7 @@ class ToolExecutor:
                 'effect_on_tcp': 'A 軸旋轉時 X 方向出現位移誤差',
                 'measurement': '自準直儀量測 A 軸安裝垂直度',
                 'compensation': 'HTM 模型 B_OA 項',
-                'typical_value_mrad': '0.05~0.3',
+                'typical_value_deg': '0.003~0.017',
                 'interaction': '與 XOC 疊加影響 BK4 橢圓形狀',
             },
             'EXC': {
@@ -777,39 +903,24 @@ class PrecisionAgent:
     SYSTEM_PROMPT = """你是一台「工具機物理導引式 AI 精度調教助手」，
 專門協助機械加工研究者和工廠技術人員進行五軸工具機的誤差診斷與補償。
 
-## 你的核心能力
-你能夠呼叫以下工具來做真實的物理計算：
-- 執行 HTM（齊次變換矩陣）非線性辨識，識別所有 PIGE 和 PDGE 誤差項
-- 計算並應用重力變形補償
-- 訓練並應用動態 AI 補償層（LSTM/GRU/MLP）
-- 查詢誤差的物理定義和因果關係
-- 生成量測儀器採購建議
+## 你的互動 SOP (請嚴格遵守以下兩階段流程)
+當使用者上傳數據並要求分析時：
 
-## 你的物理知識框架
-五軸工具機的誤差遵循以下因果鏈：
+**【第一階段：物理幾何分析】**
+1. 你必須呼叫 `run_physical_analysis` 工具來取得 PIGE 與 PDGE 誤差。
+2. 取得數據後，向使用者解釋主要的誤差數據（如 X_OC, Y_OC 等）與物理意義。若使用者提問包含背隙，請告知此為動態誤差，需進入下一階段分析。
+3. 在回覆的最後，主動詢問使用者：「請問是否需要我繼續為您執行【重力補償】與【動態 AI 殘差學習】，以解決高頻與非線性誤差？」
+4. 停在這裡，絕對不可呼叫其他工具，等待使用者的同意。
 
-**運動學鏈**：P_actual = E_A · T_A · E_AC(θ_C) · T_C · P_local
-- E_A：A 軸相對 Bed 的靜態誤差（PIGEs A 軸群）
-- T_A：A 軸的理想旋轉矩陣
-- E_AC：C 軸相對 A 軸的靜態 + 動態誤差（PIGEs C 軸群 + PDGEs）
-- T_C：C 軸的理想旋轉矩陣
-
-**最重要的誤差交互作用**：
-- AOC（C/A 垂直度）× R（量測球半徑）= 阿貝放大誤差（Z 向）
-- EYC × sin(α_A) = EYC 對 DZ 的耦合（A 軸傾斜時才出現）
-- 重力變形 δ_z = k_z × L × sin(α_A)
-
-**三層補償架構**：
-1. 物理層（HTM 辨識）：消除 PIGE + 低頻 PDGE
-2. 重力補償層：消除準靜態重力變形
-3. 動態 AI 層（LSTM+GRU+MLP）：補償反轉尖峰、伺服不匹配、高頻 PDGEs
+**【第二階段：進階補償與預估】**
+1. 當使用者回覆同意（如「好」、「繼續」）時，你必須連續呼叫以下三個工具：`run_gravity_compensation`、`run_dynamic_ai_layer`、`estimate_compensation_effect`。
+2. 取得所有數據後，統整分析結果，給出【具體的參數補償建議】（例如：請將 X_OC 反向輸入控制器、背隙調整多少等）。
+3. 最終列出三階段的 RMS 誤差改善瀑布圖數據。
 
 ## 回應原則
-1. 遇到技術問題，優先呼叫工具取得真實數據，再基於數據回答
-2. 解釋誤差時，說明物理機制（為什麼，不只是是什麼）
-3. 給出的建議必須是具體可執行的（哪台儀器、哪個參數、多少精度）
-4. 用繁體中文回應
-5. 數值後面標注單位（μm、mrad、mm）
+- 用繁體中文回應，專業且具備工程師邏輯。
+- 數值後面必須標注單位（μm、deg、mm）。
+- 直接用自然語言對話，系統會自動在背景處理你的工具請求。
 """
 
     def __init__(self, api_key: str | None = None):
@@ -870,7 +981,8 @@ class PrecisionAgent:
             # Groq 只接受字串 "none"/"auto"/"required"，不接受 None
             # 強制回答時：tool_choice="none" 且仍傳 tools（不能傳 None）
             response = self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                # model="llama-3.3-70b-versatile",
+                model="openai/gpt-oss-120b",
                 max_tokens=4096,
                 tools=TOOL_DEFINITIONS,
                 tool_choice="none" if force_answer else "auto",
@@ -954,7 +1066,7 @@ class PrecisionAgent:
             return (
                 f"[離線模式] 已執行物理層辨識：\n"
                 f"  XOC = {result['pige']['X_OC_um']} μm\n"
-                f"  AOC = {result['pige']['A_OC_mrad']} mrad\n"
+                f"  AOC = {result['pige']['A_OC_deg']} deg\n"
                 f"  EXC = {result['pdge']['EXC_amp_um']} μm\n"
                 f"  DZ RMS 改善率 = {result['rms']['improvement_pct'][2]}%\n"
                 f"（完整 Agent 功能請設定 GROQ_API_KEY）"

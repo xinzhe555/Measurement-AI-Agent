@@ -23,6 +23,9 @@ export function InputBar({ onSend, onAnalyze, isAnalyzing }: Props) {
   const [text, setText]   = useState('')
   const [mode, setMode]   = useState<Mode>('診斷')
   const taRef = useRef<HTMLTextAreaElement>(null)
+  
+  // 1. 新增：用來參考隱藏的檔案上傳元件
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -46,6 +49,24 @@ export function InputBar({ onSend, onAnalyze, isAnalyzing }: Props) {
     if (!el) return
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 140) + 'px'
+  }
+
+  // 2. 新增：處理點擊 📎 圖示
+  const handleFileClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  // 3. 新增：處理檔案選取後的動作 (Demo 專用)
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // 自動將檔名與 Demo 劇本填入對話框
+      const attachmentText = `[已夾帶檔案: ${file.name}]\n請幫我分析這組 LRT 量測數據，找出 X/Y 向誤差與背隙的主因，並給我補償參數。`
+      setText(prev => prev ? prev + '\n' + attachmentText : attachmentText)
+      setTimeout(autoResize, 50) // 延遲一下讓 textarea 自動長高
+    }
+    // 重置 input，允許重複上傳同一個檔案
+    e.target.value = ''
   }
 
   return (
@@ -86,8 +107,19 @@ export function InputBar({ onSend, onAnalyze, isAnalyzing }: Props) {
           {/* 底部工具列 */}
           <div className="flex items-center justify-between px-3 py-1.5 border-t border-line-0">
             <div className="flex gap-1">
+              {/* 4. 新增：隱藏的 file input */}
+              <input 
+                type="file" 
+                accept=".csv" 
+                className="hidden" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+              />
+              
               {['📎', '📊', '🗑'].map(icon => (
                 <button key={icon}
+                  // 5. 新增：若點擊的是 📎，觸發檔案選取
+                  onClick={icon === '📎' ? handleFileClick : undefined}
                   className="w-6 h-6 flex items-center justify-center text-xs
                              text-tx-off hover:text-tx-mid hover:bg-ink-3
                              rounded transition-colors">
@@ -97,14 +129,14 @@ export function InputBar({ onSend, onAnalyze, isAnalyzing }: Props) {
             </div>
             <button
               onClick={handleSend}
-              disabled={!text.trim()}
+              disabled={!text.trim() || isAnalyzing}
               className="flex items-center gap-1.5 px-3 py-1 rounded
                          font-mono text-[9px] tracking-widest uppercase
                          border transition-all disabled:opacity-30 disabled:cursor-not-allowed
                          border-sig-cyan/30 text-sig-cyan bg-sig-cyan/5
                          hover:bg-sig-cyan/15 hover:border-sig-cyan/55
                          hover:shadow-[0_0_8px_rgba(0,207,255,0.12)]">
-              → 發送
+              {isAnalyzing ? '處理中...' : '→ 發送'}
             </button>
           </div>
         </div>

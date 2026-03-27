@@ -7,6 +7,10 @@ import { RmsCompareCard } from '../cards/RmsCompareCard'
 import { AgentCard } from '../cards/AgentCard'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from 'recharts'
 
+// 🌟 新增引入 Markdown 解析套件
+import ReactMarkdown from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
+
 interface Props { message: ChatMessage }
 
 export function MessageBubble({ message }: Props) {
@@ -46,13 +50,38 @@ export function MessageBubble({ message }: Props) {
           </div>
         )}
 
-        {/* 訊息文字 */}
+        {/* 🌟 修改區塊：使用 ReactMarkdown 替換原本的 split('\\n') */}
         <div className="text-[13px] text-tx-hi leading-7">
-          {message.content.split('\n').map((line, i) => (
-            <p key={i} className={line ? 'mb-2 last:mb-0' : 'mb-1'}>{line || '\u00A0'}</p>
-          ))}
+          <ReactMarkdown
+            rehypePlugins={[rehypeRaw]}
+            components={{
+              // 1. 保留原本 P 標籤的間距邏輯
+              p: ({ node, ...props }) => <p className="mb-2 last:mb-0" {...props} />,
+              
+              // 2. 完美移植你的「科技感圖片卡片」UI
+              img: ({ node, ...props }) => (
+                <div className="my-3 overflow-hidden rounded-md border border-sig-cyan/30 shadow-sm bg-ink-2 max-w-sm">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={props.src} alt={props.alt} className="w-full h-auto object-contain max-h-56 bg-black/20" />
+                  {props.alt && (
+                    <div className="px-3 py-1.5 text-[11px] text-sig-cyan bg-ink-3/50 border-t border-sig-cyan/20 text-center font-medium tracking-wide">
+                      {props.alt}
+                    </div>
+                  )}
+                </div>
+              ),
+              
+              // 3. 讓程式碼區塊 (日誌內容) 更好看一點
+              pre: ({ node, ...props }) => (
+                <pre className="bg-ink-3/80 p-3 rounded-md overflow-x-auto text-[11px] font-mono border border-line-2 my-2" {...props} />
+              )
+            }}
+          >
+            {message.content}
+          </ReactMarkdown>
         </div>
 
+        {/* 附加圖表 */}
         {message.chartData && (
           <div className="mt-3 h-48 w-full bg-ink-2 border border-line-2 rounded-lg p-2 overflow-hidden shadow-inner">
              <div className="text-[10px] font-mono text-sig-cyan mb-1 ml-1">Attachment: simulated_data.csv</div>
@@ -69,13 +98,13 @@ export function MessageBubble({ message }: Props) {
           </div>
         )}
 
-        {/* 分析結果卡片（只在系統訊息且有分析結果時顯示）*/}
+        {/* 物理層/AI層分析結果卡片 */}
         {!isUser && result && (
           <div className="mt-3 space-y-2">
             <PigeResultCard pige={result.pige} />
             <PdgeResultCard pdge={result.pdge} />
             <RmsCompareCard rms={result.rms} aiR2={result.ai_r2} />
-            {result.findings.length > 0 && (
+            {result.findings && result.findings.length > 0 && (
               <AgentCard findings={result.findings} />
             )}
           </div>

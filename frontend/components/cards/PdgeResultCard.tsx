@@ -19,11 +19,11 @@ export function PdgeResultCard({ pdge }: { pdge: PdgeResult }) {
           barPct={(pdge.ezc_amp_um/5)*100} barColor="#7EFF6E"
           val={`${pdge.ezc_amp_um} μm`} valColor="#7EFF6E"/>
         <ErrRow sym="EAC" symColor="#7EFF6E" desc="C軸 A向角度擺動（Wobble）"
-          barPct={Math.min((pdge.eac_mrad/0.1)*100, 100)} barColor="#7EFF6E"
-          val={`${pdge.eac_mrad} mr`} valColor="#7EFF6E"/>
+          barPct={Math.min((pdge.eac_deg/0.006)*100, 100)} barColor="#7EFF6E"
+          val={`${pdge.eac_deg} deg`} valColor="#7EFF6E"/>
         <ErrRow sym="EBC" symColor="#7EFF6E" desc="C軸 B向角度擺動（Wobble）"
-          barPct={Math.min((pdge.ebc_mrad/0.1)*100, 100)} barColor="#7EFF6E"
-          val={`${pdge.ebc_mrad} mr`} valColor="#7EFF6E"/>
+          barPct={Math.min((pdge.ebc_deg/0.006)*100, 100)} barColor="#7EFF6E"
+          val={`${pdge.ebc_deg} deg`} valColor="#7EFF6E"/>
       </div>
     </CardShell>
   )

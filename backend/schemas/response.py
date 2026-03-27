@@ -11,13 +11,13 @@ class PigeResult(BaseModel):
     xoc_um: float
     yoc_um: float
     zoc_um: float
-    aoc_mrad: float
-    boc_mrad: float
+    aoc_deg: float
+    boc_deg: float
     xoa_um: float
     yoa_um: float
     zoa_um: float
-    boa_mrad: float
-    coa_mrad: float
+    boa_deg: float
+    coa_deg: float
     # 識別誤差（有注入值時才有）
     xoc_error_pct: Optional[float] = None
     aoc_error_pct: Optional[float] = None
@@ -32,8 +32,8 @@ class PdgeResult(BaseModel):
     eyc_phase_deg: float  # EYC 相位
     ezc_amp_um: float     # EZC 振幅
     ezc_freq: float       # EZC 頻率（倍頻數）
-    eac_mrad: float       # Wobble A
-    ebc_mrad: float       # Wobble B
+    eac_deg: float       # Wobble A
+    ebc_deg: float       # Wobble B
 
 
 class RmsComparison(BaseModel):

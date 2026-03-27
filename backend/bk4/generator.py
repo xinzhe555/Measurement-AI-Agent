@@ -14,9 +14,10 @@ class Integrated_BK4_Simulator:
         self.pdge_gen = Physical_PDGE_Generator()
 
     def generate(self, ball_x=0.0, ball_y=0.0, ball_z=0.0, n_points=360, 
-                 view_mode="relative", custom_errors=None, enable_pdge=False, 
-                 path_type="cone", pivot_x=0.0, pivot_y=0.0, pivot_z=0.0, 
-                 match_senior_a_dir=True):
+             view_mode="relative", custom_errors=None, enable_pdge=False, 
+             path_type="cone", pivot_x=0.0, pivot_y=0.0, pivot_z=0.0,
+             tool_length=0.0,
+             match_senior_a_dir=True):
         
         if path_type == "cone":
             c_deg = np.linspace(0, 360, n_points)
@@ -35,9 +36,17 @@ class Integrated_BK4_Simulator:
         else:
             raise ValueError(f"未知的軌跡類型: {path_type}")
         
-        effective_z = ball_z + pivot_z
-        P_local = np.array([ball_x, ball_y, effective_z, 1.0])
+        # ball_z : C 軸力臂，測量球中心到 C 軸盤面的高度
+        P_local = np.array([ball_x, ball_y, ball_z, 1.0])
         
+        # pivot_z : A 軸旋轉中心到 C 軸轉盤面的固定幾何距離
+        T_pivot = self.pige_gen._get_htm(0, 0, pivot_z, 0, 0, 0)
+        T_pivot_inv = np.linalg.inv(T_pivot)
+
+        # tool_length : C 軸轉盤面到感測球中心的距離（LRT 刀長）
+        T_tool = self.pige_gen._get_htm(0, 0, tool_length, 0, 0, 0)
+        T_tool_inv = np.linalg.inv(T_tool)
+
         active_errors = self.pige_gen.errors.copy()
         if custom_errors:
             active_errors.update(custom_errors)
@@ -53,7 +62,8 @@ class Integrated_BK4_Simulator:
 
         E_A_inv = np.linalg.inv(E_A_static)
         E_AC_inv = np.linalg.inv(E_AC_static)
-        P_table = E_AC_inv @ E_A_inv @ P_local
+        P_table = T_tool_inv @ E_AC_inv @ T_pivot_inv @ E_A_inv @ T_pivot @ T_tool @ P_local
+        # P_table = P_local
 
         results = []
         zeroing_baseline = np.zeros(3)
@@ -83,17 +93,39 @@ class Integrated_BK4_Simulator:
             T_A_i = self.pige_gen._get_htm(0, 0, 0, a_rot, 0, 0)
             T_C_i = self.pige_gen._get_htm(0, 0, 0, 0, 0, c_rot)
 
-            P_ideal = T_A_i @ self.pige_gen._get_htm(0, 0, 0, 0, 0, -c_rad) @ P_local
+            P_ideal = T_A_i @ T_pivot @ self.pige_gen._get_htm(0, 0, 0, 0, 0, -c_rad) @ T_tool @ P_local
             
             if view_mode == "absolute":
-                P_actual_abs = E_A_static @ T_A_i @ E_AC_dyn @ T_C_i @ P_local
+                P_actual_abs = E_A_static @ T_A_i @ T_pivot @ E_AC_dyn @ T_C_i @ T_tool @ P_local
                 err_vec = (P_actual_abs - P_ideal)[:3]
+                
             elif view_mode == "relative":
-                P_actual = E_A_static @ T_A_i @ E_AC_dyn @ T_C_i @ P_table
+                # ==========================================
+                # 🛠️ 核心測試區：切換「數位孿生物理模型」與「學長模型」
+                # ==========================================
+                
+                # -----------------------------------------------------------------
+                # 【模式 1：您的數位孿生模型 (正確的 ISO 剛體物理模型)】
+                # 說明：E_A 在 T_A 之前 (絕對座標)，E_AC 在 T_C 之前 (靜態組裝不隨軸轉)
+                # -----------------------------------------------------------------
+                P_actual_mode1 = E_A_static @ T_A_i @ T_pivot @ E_AC_dyn @ T_C_i @ T_tool @ P_table
+                
+                # -----------------------------------------------------------------
+                # 【模式 2：學長疑似的模型 (靜態誤差被錯誤定義為「動態偏擺 Wobble」)】
+                # 說明：將誤差矩陣放到了旋轉矩陣「之後」，導致誤差跟著座標軸一起旋轉
+                # -> AOC/BOC 會產生 C 軸正弦波，BOA/ZOA 會產生 A 軸的局部耦合
+                # -----------------------------------------------------------------
+                # 注意這裡的矩陣乘法順序完全顛倒了：T_A_i 在前，T_C_i 在前
+                P_actual_mode2 = T_A_i @ E_A_static @ T_pivot @ T_C_i @ E_AC_dyn @ T_tool @ P_table
+
+                # 👇 在這裡切換你想測試的模型 (將另一個註解掉即可)
+                P_actual = P_actual_mode1  # <--- 啟用此行：測試您正確的物理模型
+                # P_actual = P_actual_mode2    # <--- 啟用此行：測試學長的 Wobble 耦合模型
+
                 Err_abs = (P_actual - P_ideal)[:3]
                 
-                # LRT 架設在主軸上，Err_abs 就已經是感測器讀數！不需再做 Rx 投影。
                 if i == 0:
+                    # 模擬實機 LRT 歸零 (Zeroing)
                     zeroing_baseline = Err_abs
                 
                 err_vec = Err_abs - zeroing_baseline

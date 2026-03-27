@@ -45,6 +45,24 @@ async def _agent_reply(req: ChatRequest) -> ChatResponse:
             None, lambda: agent.chat(req.message, verbose=True)
         )
 
+        # ==========================================
+        # 攔截 Agent 的回覆，把 RAG 日誌用摺疊標籤接在最後面
+        # ==========================================
+        rag_log = agent.executor.memory.get('last_rag_log')
+        if rag_log:
+            # 使用 Markdown 與 HTML 的 details/summary 標籤製作摺疊區塊
+            collapsible_log = (
+                f"\n\n---\n"
+                f"<details>\n"
+                f"<summary>⚙️ <b>點擊展開：系統底層檢索日誌 (Hybrid RAG)</b></summary>\n\n"
+                f"```text\n{rag_log}\n```\n"
+                f"</details>\n"
+            )
+            reply = collapsible_log + reply
+            
+            # 用完就清掉，避免下次無關的對話又重複出現這段日誌
+            agent.executor.memory['last_rag_log'] = None
+
         used_tools = []
         for msg in reversed(agent.conversation):
             if msg.get("role") == "user":
@@ -65,6 +83,12 @@ async def _agent_reply(req: ChatRequest) -> ChatResponse:
 
 def _inject_context(agent, context: dict):
     mem = agent.executor.memory
+
+    # ── 注入 TwinPanel 圖表數據（來自前端 chartData，已包含 a_axis/c_axis/dx/dy/dz）──
+    twin_data = context.get('twin_chart_data')
+    if twin_data:
+        mem['twin_chart_data'] = twin_data
+
     la  = context.get('last_analysis', {})
     if not la:
         return
@@ -74,9 +98,9 @@ def _inject_context(agent, context: dict):
         'pige': {
             'X_OC_um':   la.get('pige', {}).get('xoc_um', 0),
             'Y_OC_um':   la.get('pige', {}).get('yoc_um', 0),
-            'A_OC_mrad': la.get('pige', {}).get('aoc_mrad', 0),
-            'B_OC_mrad': la.get('pige', {}).get('boc_mrad', 0),
-            'B_OA_mrad': la.get('pige', {}).get('boa_mrad', 0),
+            'A_OC_deg': la.get('pige', {}).get('aoc_deg', 0),
+            'B_OC_deg': la.get('pige', {}).get('boc_deg', 0),
+            'B_OA_deg': la.get('pige', {}).get('boa_deg', 0),
         },
         'pdge': {
             'EXC_amp_um':    la.get('pdge', {}).get('exc_amp_um', 0),
@@ -110,12 +134,35 @@ def _inject_context(agent, context: dict):
 
 def _snapshot_memory(agent) -> dict | None:
     mem = agent.executor.memory
+    
+    # 檢查是否有跑過分析
     if not mem.get('has_analysis'):
         return None
+    
+    # 安全提取物理層結果 (避免是 None)
+    phys_res = mem.get('analysis_result') or {}
+    if not phys_res:
+        return None
+        
+    # 安全提取 AI 層結果 (避免是 None)
+    ai_res = mem.get('ai_result') or {}
+
+    # 動態整理 findings
+    findings = []
+    if mem.get('has_analysis'):
+        findings.append("已完成 PIGE/PDGE 幾何誤差解耦")
+    if mem.get('has_gravity'):
+        findings.append("已完成 Z 向重力變形量估算 (虎克定律模型)")
+    if mem.get('has_ai'):
+        findings.append("已完成 LSTM/GRU 換向背隙與伺服動態特徵學習")
+
     return {
-        'analysis_result': mem.get('analysis_result'),
-        'gravity_result':  mem.get('gravity_result'),
-        'ai_result':       mem.get('ai_result'),
+        'pige': phys_res.get('pige', {}),
+        'pdge': phys_res.get('pdge', {}),
+        'rms':  phys_res.get('rms', {}),
+        # 安全地提取 ai_r2
+        'ai_r2': ai_res.get('metrics', {}).get('lstm_r2', 0),
+        'findings': findings
     }
 
 

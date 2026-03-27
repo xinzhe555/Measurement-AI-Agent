@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  neo4j:
+    image: neo4j:5.15.0
+    container_name: raptor-neo4j
+    ports:
+      - "7474:7474"   # 網頁瀏覽器 UI 介面
+      - "7687:7687"   # Bolt 協定 API 接口
+    environment:
+      - NEO4J_AUTH=neo4j/raptor_password123
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - ./neo4j_data:/data
+    restart: unless-stopped

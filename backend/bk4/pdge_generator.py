@@ -23,7 +23,7 @@ class Physical_PDGE_Generator:
             'C_Runout_Z_Freq': 2.0,
 
             # C 軸角度擺動 (Wobble) → 放大阿貝誤差
-            'C_Wobble_A_Amp':  0.0001,      # 0.1 mrad
+            'C_Wobble_A_Amp':  0.0001,      # ≈0.006 deg
             'C_Wobble_B_Amp':  0.0001,
         }
 

@@ -41,8 +41,8 @@ export function AgentCard({ findings }: { findings: DiagnosticFinding[] }) {
         {/* 固定的儀器配置總表（補足 findings 可能不完整的情況）*/}
         <div className="grid grid-cols-2 gap-2 p-3 border-t border-line-0">
           {[
-            { name: 'Laser R-Test',   meta: 'C軸跳動 / A/C同動\n<1μm / 0.01mrad' },
-            { name: '電子自準直儀',    meta: 'A/C垂直度 (AOC)\n<0.005mrad' },
+            { name: 'Laser R-Test',   meta: 'C軸跳動 / A/C同動\n<1μm / 0.0006°' },
+            { name: '電子自準直儀',    meta: 'A/C垂直度 (AOC)\n<0.0003°' },
             { name: '主軸誤差分析儀',  meta: 'EXC / EYC / EZC\n<0.01μm' },
             { name: '預計調機時間',    meta: '傳統 5~7天\n本系統 ≤ 1天', highlight: true },
           ].map(({ name, meta, highlight }) => (

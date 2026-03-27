@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'bk4'))
 from bk4.pige_full_generator import BK4_Full_PIGE_Generator
 from bk4.pdge_generator import Physical_PDGE_Generator
 from bk4.generator import Integrated_BK4_Simulator
+from bk4.heidenhain_generator_v2 import HeidenhainLRTGenerator
 from bk4.static_analyzer import PhysicalLayerAnalyzer, AgentDiagnosticReport
 from bk4.ai_residual_learner import AIResidualLearner, inject_nonlinear_residuals
 
@@ -27,7 +28,8 @@ def run_full_analysis(
     ball_x: float = 200.0,      
     ball_y: float = 0.0,         
     ball_z: float = 0.0,        
-    tool_length: float = 0.0,   
+    pivot_z: float = 0.0,        # A軸到C軸固定幾何距離
+    tool_length: float = 0.0,    # LRT 刀長
     path_type: str = "cone",       
     view_mode: str = "relative",  
     inject_xoc: float = 0.050,
@@ -58,18 +60,28 @@ def run_full_analysis(
         # simulate 模式：用你現有的 generator 生成
         config = _build_config(inject_xoc, inject_yoc, inject_aoc, inject_boa,
                                inject_exc, inject_eyc, inject_ezc)
+        
         sim = Integrated_BK4_Simulator(config)
-
-        # 將所有前端環境參數完整傳遞給生成器，並啟動 PDGE
         raw_error, a_cmd, c_cmd = sim.generate(
             ball_x=ball_x, 
             ball_y=ball_y, 
             ball_z=ball_z, 
-            pivot_z=tool_length,
+            pivot_z=pivot_z,         
+            tool_length=tool_length, 
             path_type=path_type,     
             view_mode=view_mode,     
             enable_pdge=True         
         )
+
+        # gen = HeidenhainLRTGenerator.from_system_config(
+        #     config=config,
+        #     ball_x=ball_x,
+        #     ball_y=ball_y,
+        #     ball_z=ball_z,
+        #     tool_length=tool_length,
+        #     n_points=360,
+        # )
+        # raw_error, a_cmd, c_cmd = gen.generate()
     else:
         # upload 模式：直接使用上傳的數據
         raw_error = measured_error
@@ -82,10 +94,11 @@ def run_full_analysis(
         measured_error=raw_error,
         a_cmd=a_cmd,
         c_cmd=c_cmd,
-        ball_x=ball_x,           
-        ball_y=ball_y,           
-        ball_z=ball_z,           
-        tool_length=tool_length, 
+        ball_x=ball_x,
+        ball_y=ball_y,
+        ball_z=ball_z,
+        pivot_z=pivot_z,
+        tool_length=tool_length,
         verbose=False
     )
 
@@ -155,8 +168,8 @@ def _build_config(xoc, yoc, aoc, boa, exc, eyc, ezc):
 
 
 def _build_pige_result(params, inj_xoc, inj_yoc, inj_aoc, inj_boa) -> PigeResult:
-    to_um   = lambda v: round(float(v) * 1e6, 4)
-    to_mrad = lambda v: round(float(v) * 1e3, 4)
+    to_um  = lambda v: round(float(v) * 1e6, 4)
+    to_deg = lambda v: round(float(np.degrees(v)), 4)
     pct = lambda identified, injected: (
         round(abs(identified - injected) / abs(injected) * 100, 1)
         if injected != 0 else None
@@ -164,11 +177,11 @@ def _build_pige_result(params, inj_xoc, inj_yoc, inj_aoc, inj_boa) -> PigeResult
 
     return PigeResult(
         xoc_um=to_um(params['X_OC']),   yoc_um=to_um(params['Y_OC']),
-        zoc_um=to_um(params['Z_OC']),   aoc_mrad=to_mrad(params['A_OC']),
-        boc_mrad=to_mrad(params['B_OC']),
+        zoc_um=to_um(params['Z_OC']),   aoc_deg=to_deg(params['A_OC']),
+        boc_deg=to_deg(params['B_OC']),
         xoa_um=to_um(params['X_OA']),   yoa_um=to_um(params['Y_OA']),
-        zoa_um=to_um(params['Z_OA']),   boa_mrad=to_mrad(params['B_OA']),
-        coa_mrad=to_mrad(params['C_OA']),
+        zoa_um=to_um(params['Z_OA']),   boa_deg=to_deg(params['B_OA']),
+        coa_deg=to_deg(params['C_OA']),
         xoc_error_pct=pct(params['X_OC'], inj_xoc),
         aoc_error_pct=pct(params['A_OC'], inj_aoc),
         boa_error_pct=pct(params['B_OA'], inj_boa),
@@ -183,8 +196,8 @@ def _build_pdge_result(params) -> PdgeResult:
         eyc_phase_deg=round(float(np.degrees(params['Runout_Y_Phase'])), 1),
         ezc_amp_um=round(float(params['Runout_Z_Amp']) * 1e6, 3),
         ezc_freq=round(float(params['Runout_Z_Freq']), 2),
-        eac_mrad=round(float(params['Wobble_A_Amp']) * 1e3, 4),
-        ebc_mrad=round(float(params['Wobble_B_Amp']) * 1e3, 4),
+        eac_deg=round(float(np.degrees(params['Wobble_A_Amp'])), 4),
+        ebc_deg=round(float(np.degrees(params['Wobble_B_Amp'])), 4),
     )
 
 

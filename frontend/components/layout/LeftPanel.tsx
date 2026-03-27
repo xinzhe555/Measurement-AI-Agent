@@ -26,12 +26,12 @@ export function LeftPanel({ analysis, isAnalyzing, onAnalyze, onExportToAgent }:
   const errItems = [
     { sym: 'XOC', val: p ? `${p.xoc_um > 0 ? '+' : ''}${p.xoc_um} μm`   : '—', pct: p ? (Math.abs(p.xoc_um)/50)*100 : 0,  color: 'text-sig-amber', bar: '#FFB830' },
     { sym: 'YOC', val: p ? `${p.yoc_um > 0 ? '+' : ''}${p.yoc_um} μm`   : '—', pct: p ? (Math.abs(p.yoc_um)/20)*100 : 0,  color: 'text-sig-lime',  bar: '#7EFF6E' },
-    { sym: 'AOC', val: p ? `${p.aoc_mrad > 0 ? '+' : ''}${p.aoc_mrad} mr`: '—', pct: p ? (Math.abs(p.aoc_mrad)/0.3)*100:0, color: 'text-sig-red',   bar: '#FF4560' },
-    { sym: 'BOA', val: p ? `${p.boa_mrad > 0 ? '+' : ''}${p.boa_mrad} mr`: '—', pct: p ? (Math.abs(p.boa_mrad)/0.2)*100:0, color: 'text-sig-amber', bar: '#FFB830' },
+    { sym: 'AOC', val: p ? `${p.aoc_deg > 0 ? '+' : ''}${p.aoc_deg} °`: '—', pct: p ? (Math.abs(p.aoc_deg)/0.3)*100:0, color: 'text-sig-red',   bar: '#FF4560' },
+    { sym: 'BOA', val: p ? `${p.boa_deg > 0 ? '+' : ''}${p.boa_deg} °`: '—', pct: p ? (Math.abs(p.boa_deg)/0.2)*100:0, color: 'text-sig-amber', bar: '#FFB830' },
     { sym: 'EXC', val: d ? `${d.exc_amp_um} μm`  : '—', pct: d ? (d.exc_amp_um/10)*100  : 0, color: 'text-sig-cyan',   bar: '#00CFFF' },
     { sym: 'EYC', val: d ? `${d.eyc_amp_um} μm`  : '—', pct: d ? (d.eyc_amp_um/10)*100  : 0, color: 'text-sig-cyan',   bar: '#00CFFF' },
     { sym: 'EZC', val: d ? `${d.ezc_amp_um} μm`  : '—', pct: d ? (d.ezc_amp_um/5)*100   : 0, color: 'text-sig-lime',   bar: '#7EFF6E' },
-    { sym: 'EAC', val: d ? `${d.eac_mrad} mr`    : '—', pct: d ? Math.min(d.eac_mrad/0.1*100,100): 0, color: 'text-sig-lime', bar: '#7EFF6E' },
+    { sym: 'EAC', val: d ? `${d.eac_deg} °`    : '—', pct: d ? Math.min(d.eac_deg/0.006*100,100): 0, color: 'text-sig-lime', bar: '#7EFF6E' },
   ]
 
   const ring = analysis?.rms
@@ -68,7 +68,7 @@ export function LeftPanel({ analysis, isAnalyzing, onAnalyze, onExportToAgent }:
         <div className="grid grid-cols-2 border-b border-line-0 shrink-0">
           {[
             { lbl: 'XOC',     val: p ? `${p.xoc_um}` : '—',      unit: 'μm',  c: 'text-sig-amber', sub: '靜態偏心 X' },
-            { lbl: 'AOC',     val: p ? `${p.aoc_mrad}` : '—',    unit: 'mr',  c: 'text-sig-red',   sub: '阿貝誤差' },
+            { lbl: 'AOC',     val: p ? `${p.aoc_deg}` : '—',    unit: '°',  c: 'text-sig-red',   sub: '阿貝誤差' },
             { lbl: 'EXC',     val: d ? `${d.exc_amp_um}` : '—',  unit: 'μm',  c: 'text-sig-cyan',  sub: '徑向跳動 X' },
             { lbl: 'EYC',     val: d ? `${d.eyc_amp_um}` : '—',  unit: 'μm',  c: 'text-sig-cyan',  sub: '徑向跳動 Y' },
           ].map(({ lbl, val, unit, c, sub }, i) => (

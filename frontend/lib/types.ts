@@ -5,13 +5,13 @@ export interface PigeResult {
   xoc_um: number
   yoc_um: number
   zoc_um: number
-  aoc_mrad: number
-  boc_mrad: number
+  aoc_deg: number
+  boc_deg: number
   xoa_um: number
   yoa_um: number
   zoa_um: number
-  boa_mrad: number
-  coa_mrad: number
+  boa_deg: number
+  coa_deg: number
   xoc_error_pct?: number
   aoc_error_pct?: number
   boa_error_pct?: number
@@ -24,8 +24,8 @@ export interface PdgeResult {
   eyc_phase_deg: number
   ezc_amp_um: number
   ezc_freq: number
-  eac_mrad: number
-  ebc_mrad: number
+  eac_deg: number
+  ebc_deg: number
 }
 
 export interface RmsComparison {
@@ -96,11 +96,21 @@ export interface ChatMessage {
   chartData?: any[];
 }
 
+export interface TwinChartPoint {
+  index: number
+  a_axis: number   // A 軸角度 (deg)
+  c_axis: number   // C 軸角度 (deg)
+  dx: number       // 誤差 X (μm)
+  dy: number       // 誤差 Y (μm)
+  dz: number       // 誤差 Z (μm)
+}
+
 export interface ChatRequest {
   message: string
   session_id: string
   // context 帶入最新分析結果，讓 Agent 能引用具體數值
   context?: {
     last_analysis?: AnalyzeResponse | null
+    twin_chart_data?: TwinChartPoint[]   // TwinPanel 匯出的圖表原始數據
   } | null
 }
