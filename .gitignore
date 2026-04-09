@@ -1,8 +1,9 @@
-# ── IDE / Editor ──────────────────────────────────────
+# ── IDE / Editor / Claude Code ────────────────────────
 .env
 .env.*
 .vscode/
 .idea/
+.claude/
 
 # ── Node / Next.js ───────────────────────────────────
 node_modules/
