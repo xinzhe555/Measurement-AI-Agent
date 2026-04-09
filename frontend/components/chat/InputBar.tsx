@@ -3,8 +3,14 @@
 import { useState, useRef, KeyboardEvent } from 'react'
 import type { AnalyzeRequest } from '@/lib/types'
 
+// 知識庫來源定義
+const KB_SOURCES = [
+  { id: 'LRT',        label: 'Laser R-Test 操作手冊' },
+  { id: 'Heidenhain', label: '海德漢 TNC 640 控制器' },
+] as const
+
 interface Props {
-  onSend: (text: string) => void
+  onSend: (text: string, kbSources: string[]) => void
   onAnalyze: (req: AnalyzeRequest) => void
   isAnalyzing: boolean
 }
@@ -22,10 +28,19 @@ const PLACEHOLDERS: Record<Mode, string> = {
 export function InputBar({ onSend, onAnalyze, isAnalyzing }: Props) {
   const [text, setText]   = useState('')
   const [mode, setMode]   = useState<Mode>('診斷')
+  const [kbSources, setKbSources] = useState<string[]>(
+    KB_SOURCES.map(s => s.id)  // 預設全勾
+  )
   const taRef = useRef<HTMLTextAreaElement>(null)
-  
+
   // 1. 新增：用來參考隱藏的檔案上傳元件
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const toggleKb = (id: string) => {
+    setKbSources(prev =>
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    )
+  }
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -37,7 +52,7 @@ export function InputBar({ onSend, onAnalyze, isAnalyzing }: Props) {
   const handleSend = () => {
     const t = text.trim()
     if (!t) return
-    onSend(t)
+    onSend(t, kbSources)
     setText('')
     if (taRef.current) {
       taRef.current.style.height = 'auto'
@@ -103,6 +118,32 @@ export function InputBar({ onSend, onAnalyze, isAnalyzing }: Props) {
                        outline-none resize-none min-h-[44px] max-h-[140px]
                        leading-relaxed font-sans"
           />
+
+          {/* 知識庫來源篩選 */}
+          <div className="flex items-center gap-4 px-4 py-1.5 border-t border-line-0">
+            <span className="font-mono text-[9px] text-tx-lo tracking-wide whitespace-nowrap">
+              知識庫
+            </span>
+            {KB_SOURCES.map(({ id, label }) => (
+              <label key={id}
+                className="flex items-center gap-1.5 cursor-pointer select-none group">
+                <input
+                  type="checkbox"
+                  checked={kbSources.includes(id)}
+                  onChange={() => toggleKb(id)}
+                  className="w-3 h-3 rounded border border-line-2 bg-ink-3
+                             accent-sig-cyan cursor-pointer"
+                />
+                <span className={`font-sans text-[11px] transition-colors
+                  ${kbSources.includes(id)
+                    ? 'text-tx-hi'
+                    : 'text-tx-off line-through'
+                  } group-hover:text-tx-mid`}>
+                  {label}
+                </span>
+              </label>
+            ))}
+          </div>
 
           {/* 底部工具列 */}
           <div className="flex items-center justify-between px-3 py-1.5 border-t border-line-0">

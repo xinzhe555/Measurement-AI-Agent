@@ -1,9 +1,54 @@
+# ── IDE / Editor ──────────────────────────────────────
 .env
+.env.*
 .vscode/
+.idea/
+
+# ── Node / Next.js ───────────────────────────────────
 node_modules/
 .next/
-.env.production
-.env.local
-01_Data_Generation/
-BK4_研究基礎規格.docx
+frontend/node_modules/
+frontend/.next/
+
+# ── Python ───────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# ── 大型檔案 / 論文 / 報告 ───────────────────────────
+*.pdf
+*.pptx
+*.xlsx
+*.docx
+~$*
+
+# ── 測試用 CSV / 暫存檔 ─────────────────────────────
+*.csv
+backend/simulated_temp_data.csv
+backend/simulated_temp_meta.json
+
+# ── RAG / 知識庫 資料（大型二進位）────────────────────
+backend/rag_data/*.faiss
+backend/kb_data/
+backend/kb_files/
 backend/neo4j_data/
+
+# ── 前端 RAG 圖片（已刪除的大量圖片）────────────────
+frontend/public/images/rag/
+frontend/public/images/kb/
+
+# ── 舊版資料 / 研究資料夾 ────────────────────────────
+01_Data_Generation/
+AI Agent文獻回顧/
+
+# ── Claude Code skill-creator（大量檔案）─────────────
+skill-creator/
+.claude/skills/skill-creator/
+
+# ── OS 產生的檔案 ────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

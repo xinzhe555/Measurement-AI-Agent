@@ -37,10 +37,10 @@ heidenhain_generator_v3.py
     - 誤差計算 = 列表1(有誤差) - 列表2(無誤差)，與 HTM generator 的「歸零」概念等價
 
 【對應關係：原系統參數 → 本公式參數】
-    原 CONFIG['errors']['X_OC']  → XOC
-    原 CONFIG['errors']['Y_OC']  → YOC
-    原 CONFIG['errors']['Y_OA']  → YOA  (原系統的 Z_OA 加進刀長 L)
-    原 CONFIG['errors']['Z_OA']  → ZOA  (進入 M 的 Z 分量)
+    原 CONFIG['errors']['XOC']  → XOC
+    原 CONFIG['errors']['YOC']  → YOC
+    原 CONFIG['errors']['YOA']  → YOA  (原系統的 ZOA 加進刀長 L)
+    原 CONFIG['errors']['ZOA']  → ZOA  (進入 M 的 Z 分量)
     pivot_z（刀長）              → L
 """
 
@@ -222,10 +222,10 @@ class HeidenhainLRTGenerator:
             base.update(custom_errors)
 
         return cls(
-            XOC    = base.get('X_OC', 0.0),
-            YOC    = base.get('Y_OC', 0.0),
-            YOA    = base.get('Y_OA', 0.0),
-            ZOA    = base.get('Z_OA', 0.0),
+            XOC    = base.get('XOC', 0.0),
+            YOC    = base.get('YOC', 0.0),
+            YOA    = base.get('YOA', 0.0),
+            ZOA    = base.get('ZOA', 0.0),
             L      = tool_length,
             ball_x = ball_x,
             ball_y = ball_y,
@@ -336,7 +336,7 @@ if __name__ == "__main__":
     # 示範：from_system_config 介面
     print()
     print("  示範：from_system_config() 介面")
-    mock_config = {'errors': {'X_OC': 0.050, 'Y_OC': -0.020, 'Y_OA': 0.0, 'Z_OA': 0.0}}
+    mock_config = {'errors': {'XOC': 0.050, 'YOC': -0.020, 'YOA': 0.0, 'ZOA': 0.0}}
     gen = HeidenhainLRTGenerator.from_system_config(
         config=mock_config, ball_x=200.0, tool_length=0.0, n_points=360
     )

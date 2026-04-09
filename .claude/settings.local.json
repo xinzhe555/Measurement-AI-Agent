@@ -1,6 +1,12 @@
 {
   "permissions": {
-    "allow": []
+    "allow": [
+      "Bash(C:/Users/joe90/anaconda3/envs/metadata/python.exe -c \":*)",
+      "Bash(node create_slides.js \"PRECOS_Sprint4_Report.pptx\")",
+      "Bash(npm install:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m markitdown PRECOS_Sprint4_Report.pptx)"
+    ]
   },
   "skills": [
     ".claude/skills/precos-htm-model",

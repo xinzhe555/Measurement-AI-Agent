@@ -15,6 +15,7 @@ load_dotenv()
 from routers.analyze import router as analyze_router
 from routers.session import router as session_router
 from routers.simulate import router as simulate_router
+from routers.kb import router as kb_router
 
 app = FastAPI(
     title="PREC·OS Backend",
@@ -38,6 +39,7 @@ app.add_middleware(
 app.include_router(analyze_router)
 app.include_router(session_router)
 app.include_router(simulate_router)
+app.include_router(kb_router)
 
 
 @app.get("/health")

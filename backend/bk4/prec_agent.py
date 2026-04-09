@@ -244,20 +244,29 @@ TOOL_DEFINITIONS = [
             "name": "query_equipment_knowledge",
             "description": (
                 "檢索外部知識庫（GraphRAG），用於回答機台操作、儀器架設（如 LRT、Ball Bar）、"
-                "以及控制器參數設定（如 Heidenhain、Siemens）的問題。"
-                "此工具會回傳標準操作步驟與對應的機台/軟體畫面圖片路徑。"
+                "以及控制器參數設定（如 Heidenhain TNC 640、Siemens）的問題。"
+                "此工具已整合 TNC 640 補償功能知識圖譜：\n"
+                "- 輸入誤差代碼（XOC, YOC, AOC, BOA, Runout_X_Amp 等）可直接取得：\n"
+                "  對應的 TNC 640 補償功能名稱（KinematicsOpt, CTC, PAC, LAC, ACC, M144, TCPM）\n"
+                "  所需 Software Option 編號（Opt 48, 141, 142, 143, 145）\n"
+                "  相關 Machine Parameter（MP）設定建議\n"
+                "  PDF 操作手冊中的具體操作步驟\n"
+                "- 當辨識出顯著誤差項後，必須呼叫此工具查詢對應的 TNC 640 補償方式。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "使用者的具體問題，例如：'LRT C軸如何對位？' 或 '海德漢測試路徑怎麼開？'"
+                        "description": (
+                            "使用者的具體問題或誤差代碼，"
+                            "例如：'XOC 偏心如何補償？' 或 'KinematicsOpt 操作步驟' 或 'LRT C軸如何對位？'"
+                        )
                     },
                     "equipment_type": {
                         "type": "string",
                         "enum": ["LRT", "BallBar", "Heidenhain", "Siemens", "Fanuc", "Other"],
-                        "description": "判斷使用者正在詢問哪種設備或控制器"
+                        "description": "判斷使用者正在詢問哪種設備或控制器。誤差補償相關問題選 'Heidenhain'"
                     }
                 },
                 "required": ["query", "equipment_type"]
@@ -339,6 +348,7 @@ class ToolExecutor:
             measured_error = None
             a_cmd = c_cmd = None
             ball_x, ball_y, ball_z, pivot_z, tool_length = 200.0, 0.0, 0.0, 0.0, 0.0
+            zoc, zoa = 0.0, 0.0
             data_source = 'unknown'
 
             # ── 優先級 1：使用 use_current 或 Agent 記憶體中已有的分析數據 ──
@@ -353,11 +363,11 @@ class ToolExecutor:
                 chart = self.memory['twin_chart_data']
                 a_cmd = np.deg2rad([p['a_axis'] for p in chart])
                 c_cmd = np.deg2rad([p['c_axis'] for p in chart])
-                # 前端 chartData 中 dx/dy/dz 單位為 μm，轉回 mm 供辨識器使用
+                # 前端 chartData 中 dx/dy/dz 單位為 μm，÷1000 轉回 mm 供辨識器使用
                 measured_error = np.column_stack([
-                    [p['dx'] for p in chart],
-                    [p['dy'] for p in chart],
-                    [p['dz'] for p in chart],
+                    [p['dx'] / 1000.0 for p in chart],
+                    [p['dy'] / 1000.0 for p in chart],
+                    [p['dz'] / 1000.0 for p in chart],
                 ])
                 # 讀取機台幾何參數 meta（若存在）
                 if os.path.exists(META_PATH):
@@ -368,13 +378,17 @@ class ToolExecutor:
                     ball_z      = meta.get('ball_z', 0.0)
                     pivot_z     = meta.get('pivot_z', 0.0)
                     tool_length = meta.get('tool_length', 0.0)
+                    zoc         = meta.get('zoc', 0.0)
+                    zoa         = meta.get('zoa', 0.0)
                 data_source = 'twin_chart'
 
             else:
                 # ── 優先級 3：讀取後端 CSV 暫存檔（/api/twin_simulate 寫入）──
                 if os.path.exists(CSV_PATH):
                     df    = pd.read_csv(CSV_PATH)
-                    a_cmd = np.deg2rad(df['A'].values)
+                    # 搖籃軸欄位可能是 'A' 或 'B'（取決於 machine_type）
+                    cradle_col = 'A' if 'A' in df.columns else 'B'
+                    a_cmd = np.deg2rad(df[cradle_col].values)
                     c_cmd = np.deg2rad(df['C'].values)
                     # CSV 中 X/Y/Z 單位為 mm
                     measured_error = np.column_stack([
@@ -388,6 +402,8 @@ class ToolExecutor:
                         ball_z      = meta.get('ball_z', 0.0)
                         pivot_z     = meta.get('pivot_z', 0.0)
                         tool_length = meta.get('tool_length', 0.0)
+                        zoc         = meta.get('zoc', 0.0)
+                        zoa         = meta.get('zoa', 0.0)
                     data_source = 'csv'
 
                 # ── 優先級 4：無數據時 fallback 到重新 generate ──
@@ -415,7 +431,8 @@ class ToolExecutor:
             params, residual = analyzer.identify(
                 measured_error, a_cmd, c_cmd,
                 ball_x=ball_x, ball_y=ball_y, ball_z=ball_z,
-                pivot_z=pivot_z, tool_length=tool_length,
+                zoc=zoc, zoa=zoa, tool_length=tool_length,
+                pivot_z=pivot_z,
                 verbose=False
             )
 
@@ -427,16 +444,16 @@ class ToolExecutor:
                 'data_source': data_source,
                 'n_points':    int(len(a_cmd)),
                 'pige': {
-                    'X_OC_um':   round(params['X_OC'] * 1000, 2),
-                    'Y_OC_um':   round(params['Y_OC'] * 1000, 2),
-                    'Z_OC_um':   round(params['Z_OC'] * 1000, 2),
-                    'X_OA_um':   round(params['X_OA'] * 1000, 2),
-                    'Y_OA_um':   round(params['Y_OA'] * 1000, 2),
-                    'Z_OA_um':   round(params['Z_OA'] * 1000, 2),
-                    'A_OC_deg': round(np.degrees(params['A_OC']), 4),
-                    'B_OC_deg': round(np.degrees(params['B_OC']), 4),
-                    'B_OA_deg': round(np.degrees(params['B_OA']), 4),
-                    'C_OA_deg': round(np.degrees(params['C_OA']), 4),
+                    'XOC_um':   round(params['XOC'] * 1000, 2),
+                    'YOC_um':   round(params['YOC'] * 1000, 2),
+                    'ZOC_um':   round(params['ZOC'] * 1000, 2),
+                    'XOA_um':   round(params['XOA'] * 1000, 2),
+                    'YOA_um':   round(params['YOA'] * 1000, 2),
+                    'ZOA_um':   round(params['ZOA'] * 1000, 2),
+                    'AOC_deg': round(np.degrees(params['AOC']), 4),
+                    'BOC_deg': round(np.degrees(params['BOC']), 4),
+                    'BOA_deg': round(np.degrees(params['BOA']), 4),
+                    'COA_deg': round(np.degrees(params['COA']), 4),
                 },
                 'pdge': {
                     'EXC_amp_um':    round(params['Runout_X_Amp'] * 1000, 3),
@@ -736,11 +753,24 @@ class ToolExecutor:
     def _query_equipment_knowledge(self, query: str, equipment_type: str) -> dict:
         """
         使用 FAISS 向量檢索與 Neo4j 圖譜檢索真實的手冊圖文。
+        equipment_filters 由前端 checkbox 控制，存在 memory 中。
         """
         if not self.has_rag:
             return {'status': 'error', 'retrieved_info': "RAG 系統尚未初始化，請先建立 Vector DB。"}
-            
-        search_result = self.rag_retriever.retrieve(query=query, top_k=1)
+
+        # 讀取前端傳入的知識庫篩選（None = 不限制）
+        eq_filters = self.memory.get('equipment_filters')
+
+        # 若使用者有勾選篩選，且本次查詢的 equipment_type 不在允許清單中，直接跳過
+        if eq_filters is not None and equipment_type not in eq_filters:
+            return {
+                'status': 'filtered',
+                'retrieved_info': f"使用者未啟用 {equipment_type} 知識庫，略過查詢。"
+            }
+
+        search_result = self.rag_retriever.retrieve(
+            query=query, top_k=1, equipment_filter=eq_filters
+        )
         
         if search_result['status'] == 'success':
             # 🌟 秘訣 1：將原始日誌偷偷存進 Agent 的記憶體中，不讓 LLM 花時間重複生成
@@ -756,6 +786,7 @@ class ToolExecutor:
             2. 你必須將「系統底層因果邏輯分析」的內容，自然地揉合進你的步驟解說中。不要生硬地列出「原因：...」，而是要說「為了...，我們需要...」。
             3. ⚠️ 圖片保留指令：你必須在解說的適當段落，原封不動地插入上述資料中的 Markdown 圖片語法 (即 `![](/images/rag/...)`)。
             4. 注意：你「不需要」在回答中印出原始的檢索日誌，系統會在背景自動處理。
+            5. 🔑 數值代入指令（最重要）：如果操作步驟中提到需要輸入 XOC、YOC、YOA、ZOA 等補償值，你必須從 Agent 記憶體中的分析結果（pige 欄位）取出本次辨識的實際數值，代入步驟中。格式範例：「將游標移至 X 軸偏移欄位，輸入：**0.05**」。絕對不要只寫「輸入辨識出的 XOC 值」這種抽象描述。
             """
             return {'status': 'success', 'retrieved_info': final_output}
         else:
@@ -768,47 +799,47 @@ class ToolExecutor:
             'XOC': {
                 'name': 'C 軸 X 方向靜態偏心',
                 'category': 'PIGE',
-                'iso_symbol': 'X_OC',
+                'iso_symbol': 'XOC',
                 'physical_cause': 'C 軸轉台相對 A 軸旋轉中心在 X 方向的偏移',
                 'effect_on_tcp': '使 BK4 軌跡在 X 方向出現 1× 頻率振盪，振幅等於偏心量',
                 'measurement': 'LRT 靜態偏心量測，或 BK4 殘差 X 方向 DC 分量',
-                'compensation': 'HTM 模型中加入 X_OC 補償，或控制器輸入偏移修正',
+                'compensation': 'HTM 模型中加入 XOC 補償，或控制器輸入偏移修正',
                 'typical_value_um': '10~100',
-                'interaction': '與 A_OC 耦合：A 軸傾斜時 X 偏心會放大 Z 誤差',
+                'interaction': '與 AOC 耦合：A 軸傾斜時 X 偏心會放大 Z 誤差',
             },
             'YOC': {
                 'name': 'C 軸 Y 方向靜態偏心',
                 'category': 'PIGE',
-                'iso_symbol': 'Y_OC',
+                'iso_symbol': 'YOC',
                 'physical_cause': 'C 軸轉台相對 A 軸旋轉中心在 Y 方向的偏移',
                 'effect_on_tcp': 'BK4 軌跡 Y 方向 DC 偏移',
                 'measurement': 'LRT 靜態量測',
-                'compensation': 'HTM 模型 Y_OC 項補償',
+                'compensation': 'HTM 模型 YOC 項補償',
                 'typical_value_um': '10~50',
                 'interaction': '與 XOC 共同決定徑向偏心的方向與大小',
             },
             'AOC': {
                 'name': 'C/A 軸垂直度誤差（阿貝誤差）',
                 'category': 'PIGE',
-                'iso_symbol': 'A_OC',
+                'iso_symbol': 'AOC',
                 'physical_cause': 'C 軸旋轉面相對 A 軸旋轉面的傾斜角',
                 'effect_on_tcp': (
-                    '最危險的誤差項：阿貝放大效應使 Z 向誤差 = A_OC × R，'
+                    '最危險的誤差項：阿貝放大效應使 Z 向誤差 = AOC × R，'
                     'R=200mm 時 0.006° → 20μm Z 向誤差'
                 ),
                 'measurement': 'LRT + 自準直儀雙重確認',
-                'compensation': 'HTM 模型 A_OC 項補償',
+                'compensation': 'HTM 模型 AOC 項補償',
                 'typical_value_deg': '0.003~0.029',
                 'interaction': '與量測球半徑 R 呈線性放大關係，是最需要補償的 PIGE 項',
             },
             'BOA': {
                 'name': 'A 軸歪斜（Yaw）',
                 'category': 'PIGE',
-                'iso_symbol': 'B_OA',
+                'iso_symbol': 'BOA',
                 'physical_cause': 'A 軸安裝時 B 方向的角度偏差',
                 'effect_on_tcp': 'A 軸旋轉時 X 方向出現位移誤差',
                 'measurement': '自準直儀量測 A 軸安裝垂直度',
-                'compensation': 'HTM 模型 B_OA 項',
+                'compensation': 'HTM 模型 BOA 項',
                 'typical_value_deg': '0.003~0.017',
                 'interaction': '與 XOC 疊加影響 BK4 橢圓形狀',
             },
@@ -900,27 +931,89 @@ class PrecisionAgent:
     4. Agent 有跨對話的記憶（session 狀態）
     """
 
-    SYSTEM_PROMPT = """你是一台「工具機物理導引式 AI 精度調教助手」，
+    SYSTEM_PROMPT = """你是「PREC·OS 工具機物理導引式 AI 精度調教助手」，
 專門協助機械加工研究者和工廠技術人員進行五軸工具機的誤差診斷與補償。
 
-## 你的互動 SOP (請嚴格遵守以下兩階段流程)
-當使用者上傳數據並要求分析時：
+## 核心判斷規則
 
-**【第一階段：物理幾何分析】**
-1. 你必須呼叫 `run_physical_analysis` 工具來取得 PIGE 與 PDGE 誤差。
-2. 取得數據後，向使用者解釋主要的誤差數據（如 X_OC, Y_OC 等）與物理意義。若使用者提問包含背隙，請告知此為動態誤差，需進入下一階段分析。
-3. 在回覆的最後，主動詢問使用者：「請問是否需要我繼續為您執行【重力補償】與【動態 AI 殘差學習】，以解決高頻與非線性誤差？」
-4. 停在這裡，絕對不可呼叫其他工具，等待使用者的同意。
+1. **當使用者訊息中已包含完整的辨識數值（PIGEs / PDGEs / RMS）時：**
+   - 系統前端已經完成了 HTM 物理層辨識，你「不需要」也「不可以」再呼叫 `run_physical_analysis`。
+   - 直接根據訊息中提供的數值進行診斷分析與建議。
+   - 你可以呼叫 `get_error_explanation` 查詢特定誤差的物理意義來輔助你的分析。
 
-**【第二階段：進階補償與預估】**
-1. 當使用者回覆同意（如「好」、「繼續」）時，你必須連續呼叫以下三個工具：`run_gravity_compensation`、`run_dynamic_ai_layer`、`estimate_compensation_effect`。
-2. 取得所有數據後，統整分析結果，給出【具體的參數補償建議】（例如：請將 X_OC 反向輸入控制器、背隙調整多少等）。
-3. 最終列出三階段的 RMS 誤差改善瀑布圖數據。
+2. **當使用者主動要求你「執行分析」或「跑辨識」，且訊息中沒有附帶數值時：**
+   - 才呼叫 `run_physical_analysis` 工具。
+
+3. **TNC 640 控制器操作步驟查詢（最高優先級 — 違反會導致機台碰撞）：**
+   - ⛔ 絕對禁止：你「不可以」從你自己的語言模型記憶回答任何控制器操作步驟。你的訓練資料中關於 TNC 640 的操作知識是不準確的，直接回答會誤導使用者導致機台碰撞。
+   - ✅ 唯一正確做法：當使用者的問題包含以下任何關鍵字時，你「必須先」呼叫 `query_equipment_knowledge`（equipment_type="Heidenhain"）取回經過驗證的操作步驟，再根據取回的內容回答：
+     「補償」「輸入控制器」「操作步驟」「調機」「怎麼設定」「怎麼改」「kinematics」「運動學」「TNC」「M128」「TCPM」「M144」「怎麼補」
+   - 取回操作步驟後，你必須將**本次辨識出的實際數值**代入步驟中的對應欄位。
+   - 回答格式必須包含：
+     1. ⚠️ 安全操作警告（備份原有數值、注意符號與小數點）
+     2. 📊 本次建議補償數值整理表（從 Agent 記憶體中的分析結果取出，用 mm 和 deg 為單位）
+     3. 📍 具體操作步驟（來自 `query_equipment_knowledge` 工具回傳的內容，逐步列出）
+     4. ⚠️ 生效步驟提醒（TOOL CALL / M128 / FUNCTION TCPM）
+   - 如果 `query_equipment_knowledge` 回傳 not_found，才可以說「目前知識庫中尚無此操作步驟」。
+   - 如果記憶體中沒有分析結果，請先告知使用者需要先執行分析。
+
+4. **進階補償（重力 + AI）：**
+   - 在你完成第一階段診斷後，主動詢問使用者是否需要進階補償。
+   - 使用者同意後，依序呼叫 `run_gravity_compensation` → `run_dynamic_ai_layer` → `estimate_compensation_effect`。
+
+## 回應格式規範（嚴格遵守）
+
+你的回應必須使用清晰的 Markdown 結構，具體規範如下：
+
+```
+## 診斷摘要
+用 2-3 句話總結本次辨識的關鍵發現。
+
+## 主要誤差源分析
+
+### 1. [誤差代號] — [名稱]
+- **辨識值：** XX µm / XX°
+- **物理意義：** 一句話說明這個誤差怎麼產生的
+- **對加工的影響：** 一句話說明它如何影響工件精度
+
+（依嚴重程度排序，只列出數值顯著的項目，不要列出接近零的項目）
+
+## 補償效果評估
+用表格或條列呈現 RMS 補償前後的對比。（若目前沒有 RMS 數據則跳過此章節，不要輸出空的模板）
+
+## 調機建議
+按優先順序列出具體操作步驟。（若使用者沒有問調機建議則可省略）
+```
+
+## 誤差參數物理知識（回答時必須引用正確的物理意義，不可自行猜測）
+
+**PIGEs（位置無關靜態幾何誤差）：**
+- XOC：C 軸轉台旋轉中心相對 A 軸在 X 方向的偏心量。造成 BK4 軌跡 X 方向 1× 頻率振盪。
+- YOC：C 軸轉台旋轉中心相對 A 軸在 Y 方向的偏心量。與 XOC 合成決定偏心方向與大小。
+- AOC：C/A 軸垂直度誤差（阿貝誤差），最危險的 PIGE 項。阿貝放大效應：Z 誤差 ≈ AOC × R（R = 球心半徑 200mm）。
+- BOC：C 軸相對 A 軸的傾斜角。
+- YOA：A 軸旋轉中心在 Y 方向的偏移。A 軸旋轉時 Y/Z 方向出現正弦偏移。
+- ZOA：A 軸旋轉中心在 Z 方向的偏移。A 軸旋轉時產生 Z 向位移耦合。
+- BOA：A 軸 Yaw 歪斜，A 軸安裝時 B 方向角度偏差，影響 X 向精度。
+- COA：A 軸 Roll 歪斜。
+
+**PDGEs（位置相關動態幾何誤差）：**
+- EXC：C 軸 X 徑向跳動，軸承偏心導致旋轉時 X 方向週期性偏移（1× 頻率）。
+- EYC：C 軸 Y 徑向跳動，與 EXC 相位差 ~90° 形成橢圓軌跡誤差。
+- EZC：C 軸軸向竄動，轉台端面不平造成 Z 方向週期振盪（通常 2× 頻率）。
+
+**判斷顯著性基準：**
+- 平移 PIGEs：> 0.005 mm 為顯著
+- 角度 PIGEs：> 0.001° 為顯著
+- PDGEs：> 0.001 mm 為顯著
+- 低於基準的參數視為雜訊，不要提及
 
 ## 回應原則
-- 用繁體中文回應，專業且具備工程師邏輯。
-- 數值後面必須標注單位（μm、deg、mm）。
-- 直接用自然語言對話，系統會自動在背景處理你的工具請求。
+- 用繁體中文回應，語氣專業但易懂。
+- 平移量一律用 **mm**，角度用 **°(deg)**，RMS 可用 µm。
+- 只分析數值顯著的誤差項，接近零的不要提。
+- 不要重複列出原始數據表格，使用者已經在介面上看到了。
+- 不要輸出任何 JSON 或程式碼區塊，只用自然語言和 Markdown 排版。
 """
 
     def __init__(self, api_key: str | None = None):
@@ -981,8 +1074,8 @@ class PrecisionAgent:
             # Groq 只接受字串 "none"/"auto"/"required"，不接受 None
             # 強制回答時：tool_choice="none" 且仍傳 tools（不能傳 None）
             response = self.client.chat.completions.create(
-                # model="llama-3.3-70b-versatile",
-                model="openai/gpt-oss-120b",
+                model="llama-3.3-70b-versatile",
+                # model="openai/gpt-oss-120b",
                 max_tokens=4096,
                 tools=TOOL_DEFINITIONS,
                 tool_choice="none" if force_answer else "auto",
@@ -1065,8 +1158,8 @@ class PrecisionAgent:
             result = self.executor.execute('run_physical_analysis', {'mode': 'simulate'})
             return (
                 f"[離線模式] 已執行物理層辨識：\n"
-                f"  XOC = {result['pige']['X_OC_um']} μm\n"
-                f"  AOC = {result['pige']['A_OC_deg']} deg\n"
+                f"  XOC = {result['pige']['XOC_um']} μm\n"
+                f"  AOC = {result['pige']['AOC_deg']} deg\n"
                 f"  EXC = {result['pdge']['EXC_amp_um']} μm\n"
                 f"  DZ RMS 改善率 = {result['rms']['improvement_pct'][2]}%\n"
                 f"（完整 Agent 功能請設定 GROQ_API_KEY）"

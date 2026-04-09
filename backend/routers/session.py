@@ -40,27 +40,22 @@ async def _agent_reply(req: ChatRequest) -> ChatResponse:
         if req.context:
             _inject_context(agent, req.context)
 
+        # 注入知識庫來源篩選（讓 ToolExecutor 的 RAG 查詢尊重使用者選擇）
+        if req.equipment_filters is not None:
+            agent.executor.memory['equipment_filters'] = req.equipment_filters
+
         import asyncio
         reply = await asyncio.get_event_loop().run_in_executor(
             None, lambda: agent.chat(req.message, verbose=True)
         )
 
         # ==========================================
-        # 攔截 Agent 的回覆，把 RAG 日誌用摺疊標籤接在最後面
+        # 提取 RAG 參考來源（獨立欄位，前端用按鈕摺疊顯示）
         # ==========================================
         rag_log = agent.executor.memory.get('last_rag_log')
+        rag_sources = None
         if rag_log:
-            # 使用 Markdown 與 HTML 的 details/summary 標籤製作摺疊區塊
-            collapsible_log = (
-                f"\n\n---\n"
-                f"<details>\n"
-                f"<summary>⚙️ <b>點擊展開：系統底層檢索日誌 (Hybrid RAG)</b></summary>\n\n"
-                f"```text\n{rag_log}\n```\n"
-                f"</details>\n"
-            )
-            reply = collapsible_log + reply
-            
-            # 用完就清掉，避免下次無關的對話又重複出現這段日誌
+            rag_sources = rag_log
             agent.executor.memory['last_rag_log'] = None
 
         used_tools = []
@@ -76,6 +71,7 @@ async def _agent_reply(req: ChatRequest) -> ChatResponse:
             has_analysis=agent.executor.memory.get('has_analysis', False),
             analysis=_snapshot_memory(agent),
             used_tools=used_tools,
+            rag_sources=rag_sources,
         )
     except Exception as e:
         return ChatResponse(reply=f"系統暫時無法回應（{e}），請稍後再試。", has_analysis=False)
@@ -96,11 +92,11 @@ def _inject_context(agent, context: dict):
     mem['analysis_result'] = {
         'status': 'injected_from_frontend',
         'pige': {
-            'X_OC_um':   la.get('pige', {}).get('xoc_um', 0),
-            'Y_OC_um':   la.get('pige', {}).get('yoc_um', 0),
-            'A_OC_deg': la.get('pige', {}).get('aoc_deg', 0),
-            'B_OC_deg': la.get('pige', {}).get('boc_deg', 0),
-            'B_OA_deg': la.get('pige', {}).get('boa_deg', 0),
+            'XOC_um':   la.get('pige', {}).get('xoc_um', 0),
+            'YOC_um':   la.get('pige', {}).get('yoc_um', 0),
+            'AOC_deg': la.get('pige', {}).get('aoc_deg', 0),
+            'BOC_deg': la.get('pige', {}).get('boc_deg', 0),
+            'BOA_deg': la.get('pige', {}).get('boa_deg', 0),
         },
         'pdge': {
             'EXC_amp_um':    la.get('pdge', {}).get('exc_amp_um', 0),

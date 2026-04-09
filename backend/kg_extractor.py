@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import asyncio
 from groq import AsyncGroq  # 假設你目前系統使用的是 Groq API
 from dotenv import load_dotenv
@@ -40,7 +41,8 @@ async def extract_causality(text: str) -> list:
     """呼叫 LLM 進行因果關係萃取 (具備 Regex 強制擷取與防呆機制)"""
     try:
         response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile", 
+            # model="llama-3.3-70b-versatile", 
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": "You are a data extraction bot. You must output ONLY a valid JSON array. No explanations."},
                 {"role": "user", "content": f"{EXTRACTION_PROMPT}\n{text}"}
@@ -81,14 +83,58 @@ async def main():
     with open(json_path, "r", encoding="utf-8") as f:
         manuals = json.load(f)
 
-    print(f"📦 開始處理 {len(manuals)} 筆手冊資料...")
+    # 用 CLI 參數控制 equipment 過濾，預設處理全部
+    # 用法：python kg_extractor.py                 → 全部
+    #       python kg_extractor.py --equipment Heidenhain → 只處理 TNC640
+    #       python kg_extractor.py --equipment LRT        → 只處理 LRT
+    target_equipment = None
+    if "--equipment" in sys.argv:
+        idx = sys.argv.index("--equipment")
+        if idx + 1 < len(sys.argv):
+            target_equipment = sys.argv[idx + 1]
+
+    if target_equipment:
+        target_manuals = [d for d in manuals if d.get("equipment") == target_equipment]
+        print(f"📦 篩選 equipment={target_equipment}，共 {len(target_manuals)} 筆（總計 {len(manuals)} 筆）")
+    else:
+        target_manuals = manuals
+        print(f"📦 處理全部 {len(target_manuals)} 筆手冊資料...")
+
+    # TNCFunction 關鍵字對映表（用於自動建立 PROCEDURE_STEP 邊，含中英文）
+    FUNCTION_KEYWORDS = {
+        "KinematicsOpt": [
+            "kinematicsopt", "kinematics opt", "cycle 48", "opt 48",
+            "運動學最佳化", "運動學補償", "旋轉軸補償",
+        ],
+        "CTC": [
+            "ctc", "cycle 990", "circular table compensation", "opt 141",
+            "循環表格補償", "轉台補償", "圓形工作台補償",
+        ],
+        "PAC": [
+            "pac", "position adaptive control", "opt 142",
+            "位置自適應", "位置調適控制",
+        ],
+        "LAC": [
+            "lac", "load adaptive control", "opt 143",
+            "負載自適應", "負載調適控制",
+        ],
+        "ACC": [
+            "acc", "active chatter control", "opt 145",
+            "主動震顫控制", "主動顫振控制", "震顫抑制",
+        ],
+        "M144": ["m144"],
+        "TCPM": [
+            "tcpm", "m128", "tool center point management",
+            "刀尖點控制", "刀尖點管理",
+        ],
+    }
 
     # 3. 逐筆處理並寫入 Neo4j
-    for doc in manuals:
+    for doc in target_manuals:
         chunk_id = doc["id"]
         equipment = doc["equipment"]
         content = doc["content"]
-        
+
         print(f"\n🧠 正在萃取 [{equipment}] {chunk_id} ...")
         
         # 呼叫 LLM 萃取因果關係
@@ -100,7 +146,6 @@ async def main():
             reason = relation.get("reason", "")
             
             if cause and effect:
-                # 呼叫你實習時寫好的神級方法：綁定 Chunk 與因果鏈
                 await graph_client.ingest_chunk_causality(
                     doc_id=equipment,
                     chunk_id=chunk_id,
@@ -109,6 +154,13 @@ async def main():
                     reason=reason
                 )
                 print(f"  🔗 寫入圖譜: ({cause}) -[{reason}]-> ({effect})")
+
+        # 掃描 chunk 文字，自動建立 TNCFunction -[PROCEDURE_STEP]-> Chunk 邊
+        content_lower = content.lower()
+        for func_name, keywords in FUNCTION_KEYWORDS.items():
+            if any(kw in content_lower for kw in keywords):
+                await graph_client.link_function_to_chunk(func_name, chunk_id, step_index=0)
+                print(f"  ⚙️  連結 {func_name} → {chunk_id}")
 
     await graph_client.close()
     print("\n🎉 知識圖譜抽取與寫入全部完成！")

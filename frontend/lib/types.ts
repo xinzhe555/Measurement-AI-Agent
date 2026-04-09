@@ -93,7 +93,8 @@ export interface ChatMessage {
   timestamp: string
   analysisResult?: AnalyzeResponse
   usedTools?: string[]
-  chartData?: any[];
+  chartData?: any[]
+  ragSources?: string | null  // RAG 參考來源（Markdown），前端用摺疊按鈕顯示
 }
 
 export interface TwinChartPoint {
@@ -105,9 +106,21 @@ export interface TwinChartPoint {
   dz: number       // 誤差 Z (μm)
 }
 
+export interface KBFileInfo {
+  file_id: string
+  filename: string
+  equipment: string
+  upload_time: string
+  status: 'uploaded' | 'converting' | 'chunking' | 'vectorizing' | 'extracting' | 'done' | 'error'
+  error_message?: string | null
+  chunk_count?: number | null
+}
+
 export interface ChatRequest {
   message: string
   session_id: string
+  // 知識庫來源篩選：["LRT", "Heidenhain"] 等，空陣列 = 不查知識庫
+  equipment_filters?: string[]
   // context 帶入最新分析結果，讓 Agent 能引用具體數值
   context?: {
     last_analysis?: AnalyzeResponse | null

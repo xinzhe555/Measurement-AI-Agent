@@ -11,20 +11,20 @@ import numpy as np
 CONFIG = {
     'errors': {
         # [E_AC] C 軸相對於 A 軸的靜態誤差
-        'X_OC': 0.050,    # mm  C軸偏心X (50 um)
-        'Y_OC': -0.020,   # mm  C軸偏心Y (-20 um)
-        'Z_OC': 0.000,
-        'A_OC': 0.0003,   # rad C/A垂直度 (≈0.017 deg)
-        'B_OC': 0.000,
-        'C_OC': 0.000,
+        'XOC': 0.050,    # mm  C軸偏心X (50 um)
+        'YOC': -0.020,   # mm  C軸偏心Y (-20 um)
+        'ZOC': 0.000,
+        'AOC': 0.0003,   # rad C/A垂直度 (≈0.017 deg)
+        'BOC': 0.000,
+        'COC': 0.000,
 
         # [E_A] A 軸相對於 Bed 的靜態誤差
-        'X_OA': 0.000,
-        'Y_OA': 0.000,
-        'Z_OA': 0.000,
-        'A_OA': 0.000,
-        'B_OA': 0.0002,   # rad A軸歪斜 (≈0.011 deg)
-        'C_OA': 0.000,
+        'XOA': 0.000,
+        'YOA': 0.000,
+        'ZOA': 0.000,
+        'AOA': 0.000,
+        'BOA': 0.0002,   # rad A軸歪斜 (≈0.011 deg)
+        'COA': 0.000,
     }
 }
 
@@ -58,11 +58,11 @@ class BK4_Full_PIGE_Generator:
     def get_static_error_matrices(self):
         """取得靜態誤差矩陣 E_A, E_AC"""
         E_AC = self._get_error_matrix(
-            self.errors['X_OC'], self.errors['Y_OC'], self.errors['Z_OC'],
-            self.errors['A_OC'], self.errors['B_OC'], self.errors['C_OC']
+            self.errors['XOC'], self.errors['YOC'], self.errors['ZOC'],
+            self.errors['AOC'], self.errors['BOC'], self.errors['COC']
         )
         E_A = self._get_error_matrix(
-            self.errors['X_OA'], self.errors['Y_OA'], self.errors['Z_OA'],
-            self.errors['A_OA'], self.errors['B_OA'], self.errors['C_OA']
+            self.errors['XOA'], self.errors['YOA'], self.errors['ZOA'],
+            self.errors['AOA'], self.errors['BOA'], self.errors['COA']
         )
         return E_A, E_AC

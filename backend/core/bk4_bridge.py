@@ -102,8 +102,8 @@ def run_full_analysis(
         verbose=False
     )
 
-    rms_before = np.sqrt(np.mean(raw_error**2, axis=0)) * 1e6   # → μm
-    rms_phys   = np.sqrt(np.mean(phys_residual**2, axis=0)) * 1e6
+    rms_before = np.sqrt(np.mean(raw_error**2, axis=0)) * 1e3   # mm → μm
+    rms_phys   = np.sqrt(np.mean(phys_residual**2, axis=0)) * 1e3
 
     # ── Step 3：AI 殘差層 ─────────────────────────────────
     ai_r2 = None
@@ -121,7 +121,7 @@ def run_full_analysis(
         # 修正：ai_residual_learner.py 裡面定義的是 train_r2，不是 r2_score
         ai_r2 = float(mlp.train_r2) if hasattr(mlp, 'train_r2') and mlp.train_r2 is not None else None
 
-    rms_ai = np.sqrt(np.mean(final_residual**2, axis=0)) * 1e6
+    rms_ai = np.sqrt(np.mean(final_residual**2, axis=0)) * 1e3   # mm → μm
 
     # ── Step 4：Agent 診斷 ────────────────────────────────
     agent = AgentDiagnosticReport()
@@ -155,10 +155,10 @@ def _build_config(xoc, yoc, aoc, boa, exc, eyc, ezc):
     from bk4.pige_full_generator import CONFIG as BASE_CONFIG
     import copy
     cfg = copy.deepcopy(BASE_CONFIG)
-    cfg['errors']['X_OC'] = xoc
-    cfg['errors']['Y_OC'] = yoc
-    cfg['errors']['A_OC'] = aoc
-    cfg['errors']['B_OA']  = boa
+    cfg['errors']['XOC'] = xoc
+    cfg['errors']['YOC'] = yoc
+    cfg['errors']['AOC'] = aoc
+    cfg['errors']['BOA']  = boa
     cfg['PDGE'] = {
         'C_Runout_X_Amp': exc,
         'C_Runout_Y_Amp': eyc,
@@ -168,7 +168,7 @@ def _build_config(xoc, yoc, aoc, boa, exc, eyc, ezc):
 
 
 def _build_pige_result(params, inj_xoc, inj_yoc, inj_aoc, inj_boa) -> PigeResult:
-    to_um  = lambda v: round(float(v) * 1e6, 4)
+    to_um  = lambda v: round(float(v) * 1e3, 4)   # mm → μm
     to_deg = lambda v: round(float(np.degrees(v)), 4)
     pct = lambda identified, injected: (
         round(abs(identified - injected) / abs(injected) * 100, 1)
@@ -176,25 +176,25 @@ def _build_pige_result(params, inj_xoc, inj_yoc, inj_aoc, inj_boa) -> PigeResult
     )
 
     return PigeResult(
-        xoc_um=to_um(params['X_OC']),   yoc_um=to_um(params['Y_OC']),
-        zoc_um=to_um(params['Z_OC']),   aoc_deg=to_deg(params['A_OC']),
-        boc_deg=to_deg(params['B_OC']),
-        xoa_um=to_um(params['X_OA']),   yoa_um=to_um(params['Y_OA']),
-        zoa_um=to_um(params['Z_OA']),   boa_deg=to_deg(params['B_OA']),
-        coa_deg=to_deg(params['C_OA']),
-        xoc_error_pct=pct(params['X_OC'], inj_xoc),
-        aoc_error_pct=pct(params['A_OC'], inj_aoc),
-        boa_error_pct=pct(params['B_OA'], inj_boa),
+        xoc_um=to_um(params['XOC']),   yoc_um=to_um(params['YOC']),
+        zoc_um=to_um(params['ZOC']),   aoc_deg=to_deg(params['AOC']),
+        boc_deg=to_deg(params['BOC']),
+        xoa_um=to_um(params['XOA']),   yoa_um=to_um(params['YOA']),
+        zoa_um=to_um(params['ZOA']),   boa_deg=to_deg(params['BOA']),
+        coa_deg=to_deg(params['COA']),
+        xoc_error_pct=pct(params['XOC'], inj_xoc),
+        aoc_error_pct=pct(params['AOC'], inj_aoc),
+        boa_error_pct=pct(params['BOA'], inj_boa),
     )
 
 
 def _build_pdge_result(params) -> PdgeResult:
     return PdgeResult(
-        exc_amp_um=round(float(params['Runout_X_Amp']) * 1e6, 3),
+        exc_amp_um=round(float(params['Runout_X_Amp']) * 1e3, 3),   # mm → μm
         exc_phase_deg=round(float(np.degrees(params['Runout_X_Phase'])), 1),
-        eyc_amp_um=round(float(params['Runout_Y_Amp']) * 1e6, 3),
+        eyc_amp_um=round(float(params['Runout_Y_Amp']) * 1e3, 3),   # mm → μm
         eyc_phase_deg=round(float(np.degrees(params['Runout_Y_Phase'])), 1),
-        ezc_amp_um=round(float(params['Runout_Z_Amp']) * 1e6, 3),
+        ezc_amp_um=round(float(params['Runout_Z_Amp']) * 1e3, 3),   # mm → μm
         ezc_freq=round(float(params['Runout_Z_Freq']), 2),
         eac_deg=round(float(np.degrees(params['Wobble_A_Amp'])), 4),
         ebc_deg=round(float(np.degrees(params['Wobble_B_Amp'])), 4),

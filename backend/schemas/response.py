@@ -79,3 +79,4 @@ class ChatResponse(BaseModel):
     has_analysis: bool = False
     analysis: Optional[Dict[str, Any]] = None
     used_tools: Optional[list[str]] = []
+    rag_sources: Optional[str] = None  # RAG 參考來源（Markdown 格式，供前端摺疊顯示）

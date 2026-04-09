@@ -1,79 +1,104 @@
 """
-physical_analyzer.py
-物理層辨識器：與生成器使用相同的 HTM 數學模型
-用非線性最小二乘法（scipy.optimize.least_squares）反算物理參數
+static_analyzer.py
+物理層辨識器：使用 HTM + Rodrigues 旋轉公式
+用非線性最小二乘法（scipy.optimize.least_squares）反算物理誤差參數
 
-辨識的誤差項：
-    PIGE: X_OC, Y_OC, Z_OC, A_OC, B_OC  (C軸靜態偏差)
-          X_OA, Y_OA, Z_OA, B_OA, C_OA  (A軸靜態偏差)
+辨識的誤差項（10 個 PIGE + 8 個 PDGE = 18 參數）：
+    PIGE: XOC, YOC             (C 軸旋轉中心偏移)
+          AOC, BOC             (C 軸偏擺)
+          YOA, Z_OA_err        (A 軸旋轉中心偏移)
+          BOA, COA             (A 軸偏擺)
     PDGE: C_Runout_X_Amp/Phase, C_Runout_Y_Amp/Phase  (徑向跳動)
           C_Runout_Z_Amp/Freq                          (軸向竄動)
           C_Wobble_A_Amp, C_Wobble_B_Amp               (角度擺動)
+
+幾何距離（ZOC, ZOA）為輸入參數，非辨識目標：
+    ZOC: C 軸與搖籃軸 Z 方向距離 → 影響偏擺誤差放大倍率
+    ZOA: 搖籃軸 Z 方向距離
 """
 import numpy as np
 from scipy.optimize import least_squares
 
 
 # ──────────────────────────────────────────────────────────────
-# HTM 工具函式
+# Rodrigues 旋轉公式
 # ──────────────────────────────────────────────────────────────
 
-def _htm(x, y, z, a, b, c):
-    Ca, Sa = np.cos(a), np.sin(a)
-    Cb, Sb = np.cos(b), np.sin(b)
-    Cc, Sc = np.cos(c), np.sin(c)
+def _rodrigues(k, theta):
+    """繞單位向量 k 旋轉角度 theta"""
+    kx, ky, kz = k
+    ct = np.cos(theta)
+    st = np.sin(theta)
+    vt = 1.0 - ct
     return np.array([
-        [Cb*Cc,              -Cb*Sc,              Sb,    x],
-        [Sa*Sb*Cc + Ca*Sc,  -Sa*Sb*Sc + Ca*Cc,  -Sa*Cb, y],
-        [-Ca*Sb*Cc + Sa*Sc,  Ca*Sb*Sc + Sa*Cc,   Ca*Cb, z],
-        [0, 0, 0, 1]
-    ])
-
-def _err_mat(dx, dy, dz, da, db, dc):
-    return np.array([
-        [1,   -dc,  db,  dx],
-        [dc,   1,  -da,  dy],
-        [-db,  da,   1,  dz],
-        [0,    0,    0,   1]
+        [kx*kx*vt + ct,     kx*ky*vt - kz*st,  kx*kz*vt + ky*st],
+        [kx*ky*vt + kz*st,  ky*ky*vt + ct,      ky*kz*vt - kx*st],
+        [kx*kz*vt - ky*st,  ky*kz*vt + kx*st,   kz*kz*vt + ct   ],
     ])
 
 
+def _c_axis_vector(aoc, boc):
+    """C 軸偏擺後軸向量：Rx(AOC) @ Ry(BOC) @ [0, 0, -1]"""
+    sb, cb = np.sin(boc), np.cos(boc)
+    sa, ca = np.sin(aoc), np.cos(aoc)
+    return np.array([-sb, cb * sa, -cb * ca])
+
+
+def _a_axis_vector(boa, coa):
+    """A 軸偏擺後軸向量：Ry(BOA) @ Rz(COA) @ [-1, 0, 0]"""
+    sb, cb = np.sin(boa), np.cos(boa)
+    sc, cc = np.sin(coa), np.cos(coa)
+    return np.array([-cc * cb, -sc, cc * sb])
+
+
+K_C_IDEAL = np.array([0.0, 0.0, -1.0])
+K_A_IDEAL = np.array([-1.0, 0.0, 0.0])
+
+
 # ──────────────────────────────────────────────────────────────
-# 前向模型（Forward Model）
-# 與 generator.py 中的模擬邏輯完全對應
+# 前向模型（Forward Model）— HTM + Rodrigues
 # ──────────────────────────────────────────────────────────────
 
 def forward_model(params, a_cmd, c_cmd, ball_x, ball_y, ball_z,
-                  pivot_z=0.0, tool_length=0.0):
+                  zoc=0.0, zoa=0.0, tool_length=0.0,
+                  # 保留舊介面相容
+                  pivot_z=None):
     """
-    給定一組物理參數，預測 BK4 路徑的誤差殘差。
+    Rodrigues 版前向模型，與 RodriguesLRTGenerator 物理一致。
 
-    完整還原 generator.py 的 relative / view_mode 邏輯：
-      - 旋轉方向：a_rot = -a_rad, c_rot = -c_rad（match_senior_a_dir=True）
-      - P_table：P_local 先經靜態誤差逆矩陣預補償（與 generator 一致）
-      - P_ideal：T_A_i @ T_pivot @ T_C(-c_rad) @ T_tool @ P_local（還原 LRT 理想軌跡定義）
-      - zeroing：第 0 點絕對偏差作為基線扣除（模擬 LRT 歸零）
+    公式：
+      P_error   = Rcr_err × ((Rc_err × (P - Q_actual) + Q_actual) - S_actual) + S_actual
+      P_noerror = Rcr_ideal × ((Rc_ideal × (P - Q_geom) + Q_geom) - S_geom) + S_geom
+
+    Parameters
+    ----------
+    params : array-like (18,)
+        [XOC, YOC, AOC, BOC,
+         YOA, Z_OA_err, BOA, COA,
+         Rx_amp, Rx_ph, Ry_amp, Ry_ph, Rz_amp, Rz_freq,
+         Wa_amp, Wb_amp,
+         _reserved1, _reserved2]
+    zoc : float
+        C 軸與搖籃軸 Z 方向幾何距離 (mm)，非辨識目標
+    zoa : float
+        搖籃軸 Z 方向幾何距離 (mm)，非辨識目標
     """
-    (X_OC, Y_OC, Z_OC, A_OC, B_OC,
-     X_OA, Y_OA, Z_OA, B_OA, C_OA,
+    # 向後相容：如果呼叫者傳 pivot_z 但沒傳 zoc，用 pivot_z
+    if pivot_z is not None and zoc == 0.0:
+        zoc = pivot_z
+
+    (XOC, YOC, AOC, BOC,
+     YOA, Z_OA_err, BOA, COA,
      Rx_amp, Rx_ph, Ry_amp, Ry_ph,
      Rz_amp, Rz_freq,
-     Wa_amp, Wb_amp) = params
+     Wa_amp, Wb_amp,
+     _r1, _r2) = params
 
-    P_local = np.array([ball_x, ball_y, ball_z, 1.0])
-    T_pivot = _htm(0, 0, pivot_z, 0, 0, 0)            # 機台固定幾何距離
-    T_tool  = _htm(0, 0, tool_length, 0, 0, 0)         # LRT 刀長
+    P = np.array([ball_x, ball_y, ball_z])
 
-    # 靜態誤差矩陣
-    E_A_static  = _err_mat(X_OA, Y_OA, Z_OA, 0.0,  B_OA, C_OA)
-    E_AC_static = _err_mat(X_OC, Y_OC, Z_OC, A_OC, B_OC, 0.0)
-
-    # ── P_table：與 generator 完全一致的預補償 ──
-    T_pivot_inv = np.linalg.inv(T_pivot)
-    T_tool_inv  = np.linalg.inv(T_tool)
-    E_A_inv     = np.linalg.inv(E_A_static)
-    E_AC_inv    = np.linalg.inv(E_AC_static)
-    P_table = T_tool_inv @ E_AC_inv @ T_pivot_inv @ E_A_inv @ T_pivot @ T_tool @ P_local
+    # ── 幾何向量（控制器已知）────────────────────────────────────
+    Q_geom = np.array([0.0, 0.0, zoc])
+    S_geom = np.array([0.0, 0.0, zoa + tool_length])
 
     N = len(a_cmd)
     predicted = np.zeros((N, 3))
@@ -83,36 +108,39 @@ def forward_model(params, a_cmd, c_cmd, ball_x, ball_y, ball_z,
         a_rad = a_cmd[i]
         c_rad = c_cmd[i]
 
-        # 旋轉方向（對應 generator match_senior_a_dir=True）
-        a_rot = -a_rad
-        c_rot = -c_rad
-
-        # 動態 PDGE
+        # ── 動態 PDGE（隨 C 角度的諧波分量）────────────────────
         exc = Rx_amp * np.cos(c_rad + Rx_ph)
         eyc = Ry_amp * np.sin(c_rad + Ry_ph)
         ezc = Rz_amp * np.sin(Rz_freq * c_rad)
         eac = Wa_amp * np.cos(c_rad)
         ebc = Wb_amp * np.sin(c_rad)
 
-        # 動態疊加的 C 軸誤差矩陣
-        E_AC_dyn = _err_mat(X_OC + exc, Y_OC + eyc, Z_OC + ezc,
-                            A_OC + eac, B_OC + ebc, 0.0)
+        # ── C 軸：靜態 + 動態偏擺 ─────────────────────────────
+        aoc_total = AOC + eac
+        boc_total = BOC + ebc
+        k_c = _c_axis_vector(aoc_total, boc_total)
 
-        T_A_i = _htm(0, 0, 0, a_rot, 0, 0)
-        T_C_i = _htm(0, 0, 0, 0, 0, c_rot)
+        # ── A 軸：靜態偏擺 ─────────────────────────────────────
+        k_a = _a_axis_vector(BOA, COA)
 
-        # 理想位置（與 generator P_ideal 定義完全一致）
-        T_C_ideal = _htm(0, 0, 0, 0, 0, -c_rad)
-        P_ideal = T_A_i @ T_pivot @ T_C_ideal @ T_tool @ P_local
+        # ── Q_actual / S_actual（含偏移誤差）───────────────────
+        Q_actual = np.array([XOC + exc, YOC + eyc, zoc + ezc])
+        S_actual = np.array([0.0, YOA, zoa + Z_OA_err + tool_length])
 
-        # 實際位置（Mode 1：正確物理模型）
-        P_actual = E_A_static @ T_A_i @ T_pivot @ E_AC_dyn @ T_C_i @ T_tool @ P_table
+        # ── P_error：Rodrigues 含偏擺 + 偏移 ──────────────────
+        Rc = _rodrigues(k_c, c_rad)
+        Ra = _rodrigues(k_a, a_rad)
+        P_error = Ra @ ((Rc @ (P - Q_actual) + Q_actual) - S_actual) + S_actual
 
-        Err_abs = (P_actual - P_ideal)[:3]
+        # ── P_noerror：理想旋轉 + 幾何距離 ────────────────────
+        Rc_ideal = _rodrigues(K_C_IDEAL, c_rad)
+        Ra_ideal = _rodrigues(K_A_IDEAL, a_rad)
+        P_noerror = Ra_ideal @ ((Rc_ideal @ (P - Q_geom) + Q_geom) - S_geom) + S_geom
 
-        # LRT 歸零基線
+        Err_abs = P_error - P_noerror
+
         if i == 0:
-            zeroing_baseline = Err_abs
+            zeroing_baseline = Err_abs.copy()
 
         predicted[i] = Err_abs - zeroing_baseline
 
@@ -126,30 +154,40 @@ def forward_model(params, a_cmd, c_cmd, ball_x, ball_y, ball_z,
 class PhysicalLayerAnalyzer:
     """
     用非線性最小二乘法，對量測殘差反算物理誤差參數
+    前向模型使用 HTM + Rodrigues 旋轉公式
     """
     PARAM_NAMES = [
-        'X_OC', 'Y_OC', 'Z_OC', 'A_OC', 'B_OC',
-        'X_OA', 'Y_OA', 'Z_OA', 'B_OA', 'C_OA',
+        'XOC', 'YOC', 'AOC', 'BOC',
+        'YOA', 'Z_OA_err', 'BOA', 'COA',
         'Runout_X_Amp', 'Runout_X_Phase',
         'Runout_Y_Amp', 'Runout_Y_Phase',
         'Runout_Z_Amp', 'Runout_Z_Freq',
         'Wobble_A_Amp', 'Wobble_B_Amp',
+        '_reserved1', '_reserved2',
     ]
+
     BOUNDS_LOWER = [
-        -0.5, -0.5, -0.0001, -0.005, -0.005,
-        -0.0001, -0.5, -0.5, -0.005, -0.005,
-        0.0,  -np.pi,
-        0.0,  -np.pi,
-        0.0,   1.0,
-        0.0,   0.0,
+        # C 軸偏移 (mm)         C 軸偏擺 (rad)
+        -0.5, -0.5,             -0.01, -0.01,
+        # A 軸偏移 (mm)         A 軸偏擺 (rad)
+        -0.5, -0.5,             -0.01, -0.01,
+        # PDGE: Runout X/Y amp+phase, Z amp+freq, Wobble
+         0.0, -np.pi,
+         0.0, -np.pi,
+         0.0,  1.0,
+         0.0,  0.0,
+        # reserved
+        -1e-12, -1e-12,
     ]
+
     BOUNDS_UPPER = [
-        0.5,  0.5,  0.0001,  0.005,  0.005,
-        0.0001, 0.5,  0.5,   0.005,  0.005,
-        0.5,  np.pi,
-        0.5,  np.pi,
-        0.5,  4.0,
-        0.005, 0.005,
+         0.5,  0.5,              0.01,  0.01,
+         0.5,  0.5,              0.01,  0.01,
+         0.5,  np.pi,
+         0.5,  np.pi,
+         0.5,  4.0,
+         0.01, 0.01,
+         1e-12,  1e-12,
     ]
 
     def __init__(self):
@@ -157,36 +195,65 @@ class PhysicalLayerAnalyzer:
         self.residual_data = None
         self.fit_rms = None
 
-    def identify(self, measured_error, a_cmd, c_cmd, ball_x=200.0, ball_y=0.0, ball_z=0.0,
-                 pivot_z=0.0, tool_length=0.0, verbose=True):
+    def identify(self, measured_error, a_cmd, c_cmd,
+                 ball_x=200.0, ball_y=0.0, ball_z=0.0,
+                 zoc=0.0, zoa=0.0, tool_length=0.0,
+                 # 向後相容
+                 pivot_z=None,
+                 verbose=True):
         """
         主辨識入口
+
+        Parameters
+        ----------
+        zoc : float
+            C 軸與搖籃軸 Z 方向幾何距離 (mm)，非辨識目標，影響偏擺放大倍率
+        zoa : float
+            搖籃軸 Z 方向幾何距離 (mm)，非辨識目標
         """
+        if pivot_z is not None and zoc == 0.0:
+            zoc = pivot_z
+
         if verbose:
             print("\n" + "="*62)
-            print("  [物理層] HTM 非線性最小二乘辨識啟動")
+            print("  [物理層] HTM + Rodrigues 非線性最小二乘辨識啟動")
+            print(f"  ZOC={zoc:.1f} mm  ZOA={zoa:.1f} mm  ball=[{ball_x},{ball_y},{ball_z}]")
             print("="*62)
 
         x0 = np.zeros(18)
-        x0[15] = 2.0
+        x0[13] = 2.0   # Rz_freq 初始猜測
 
         def residual_fn(params):
             pred = forward_model(params, a_cmd, c_cmd, ball_x, ball_y, ball_z,
-                                 pivot_z=pivot_z, tool_length=tool_length)
+                                 zoc=zoc, zoa=zoa, tool_length=tool_length)
             return (pred - measured_error).ravel()
 
         sol = least_squares(
             residual_fn, x0,
             bounds=(self.BOUNDS_LOWER, self.BOUNDS_UPPER),
             method='trf',
-            ftol=1e-10, xtol=1e-10, gtol=1e-10,
-            max_nfev=5000,
+            ftol=1e-12, xtol=1e-12, gtol=1e-12,
+            max_nfev=8000,
             verbose=0
         )
 
         self.identified_params = dict(zip(self.PARAM_NAMES, sol.x))
+
+        # 向後相容：產生舊的 key 名稱供 bk4_bridge 使用
+        p = self.identified_params
+        p['ZOC'] = 0.0      # ZOC 是幾何，不是誤差
+        p['XOA'] = 0.0      # A 軸繞 X 旋轉，XOA 不可量測
+        p['YOA'] = p.get('YOA', p.get('YOA', 0.0))
+        p['ZOA'] = p.get('Z_OA_err', 0.0)
+        p['XOC'] = p.get('XOC', 0.0)
+        p['YOC'] = p.get('YOC', 0.0)
+        p['AOC'] = p.get('AOC', 0.0)
+        p['BOC'] = p.get('BOC', 0.0)
+        p['BOA'] = p.get('BOA', 0.0)
+        p['COA'] = p.get('COA', 0.0)
+
         identified_data = forward_model(sol.x, a_cmd, c_cmd, ball_x, ball_y, ball_z,
-                                        pivot_z=pivot_z, tool_length=tool_length)
+                                        zoc=zoc, zoa=zoa, tool_length=tool_length)
         self.residual_data = measured_error - identified_data
 
         rms_before = np.sqrt(np.mean(measured_error**2, axis=0)) * 1000
@@ -202,18 +269,17 @@ class PhysicalLayerAnalyzer:
         p = self.identified_params
         rms = self.fit_rms
 
-        print("\n【PIGE 辨識結果 — C軸相對A軸】")
-        print(f"  X_OC = {p['X_OC']*1000:+8.2f} um   "
-              f"Y_OC = {p['Y_OC']*1000:+8.2f} um   "
-              f"Z_OC = {p['Z_OC']*1000:+8.2f} um")
-        print(f"  A_OC = {np.degrees(p['A_OC']):+8.4f} deg  "
-              f"B_OC = {np.degrees(p['B_OC']):+8.4f} deg")
+        print("\n【PIGE 辨識結果 — C軸】")
+        print(f"  XOC = {p['XOC']*1000:+8.2f} um   "
+              f"YOC = {p['YOC']*1000:+8.2f} um")
+        print(f"  AOC = {np.degrees(p['AOC']):+8.4f} deg  "
+              f"BOC = {np.degrees(p['BOC']):+8.4f} deg")
 
-        print("\n【PIGE 辨識結果 — A軸相對Bed】")
-        print(f"  X_OA = {p['X_OA']*1000:+8.2f} um   "
-              f"Y_OA = {p['Y_OA']*1000:+8.2f} um")
-        print(f"  B_OA = {np.degrees(p['B_OA']):+8.4f} deg  "
-              f"C_OA = {np.degrees(p['C_OA']):+8.4f} deg")
+        print("\n【PIGE 辨識結果 — A軸(搖籃)】")
+        print(f"  YOA = {p.get('YOA',0)*1000:+8.2f} um   "
+              f"ZOA = {p.get('Z_OA_err',0)*1000:+8.2f} um")
+        print(f"  BOA = {np.degrees(p['BOA']):+8.4f} deg  "
+              f"COA = {np.degrees(p['COA']):+8.4f} deg")
 
         print("\n【PDGE 辨識結果 — C軸動態諧波】")
         print(f"  徑向跳動 X: Amp={p['Runout_X_Amp']*1000:6.2f} um  "
@@ -225,12 +291,13 @@ class PhysicalLayerAnalyzer:
         print(f"  Wobble  A:  Amp={np.degrees(p['Wobble_A_Amp']):6.4f} deg  "
               f"B: Amp={np.degrees(p['Wobble_B_Amp']):6.4f} deg")
 
-        print("\n【HTM 辨識擬合效果 (RMS)】")
+        print("\n【擬合效果 (RMS)】")
         print(f"  {'軸':>4} | {'補償前':>10} | {'補償後':>10} | {'改善率':>8}")
         for i, ax in enumerate(['DX', 'DY', 'DZ']):
             b, a = rms['before'][i], rms['after'][i]
             rate = (1 - a / b) * 100 if b > 0 else 0
             print(f"  {ax:>4} | {b:>8.3f}um | {a:>8.3f}um | {rate:>6.1f}%")
+
 
 # ──────────────────────────────────────────────────────────────
 # Agent 診斷報告
@@ -242,10 +309,11 @@ class AgentDiagnosticReport:
     告訴使用者：需要量什麼誤差、用什麼儀器、優先順序
     """
     THRESHOLDS = {
-        'X_OC':        0.010,   # mm  10 um
-        'Y_OC':        0.010,
-        'A_OC':        0.0001,  # rad ≈ 0.006 deg
-        'B_OA':        0.0001,
+        'XOC':        0.010,   # mm  10 um
+        'YOC':        0.010,
+        'AOC':        0.0001,  # rad ≈ 0.006 deg
+        'BOC':        0.0001,
+        'BOA':        0.0001,
         'Runout_1x':   5.0,     # um
         'Runout_Z_2x': 3.0,
         'Residual_AI': 2.0,     # um  物理補償後殘差門檻 → 觸發AI層
@@ -283,34 +351,44 @@ class AgentDiagnosticReport:
         findings, instruments = [], set()
 
         # ── 靜態偏心
-        for key, label in [('X_OC', 'C軸偏心X'), ('Y_OC', 'C軸偏心Y')]:
-            if abs(p[key]) > self.THRESHOLDS[key]:
+        for key, label in [('XOC', 'C軸偏心X'), ('YOC', 'C軸偏心Y')]:
+            if abs(p.get(key, 0)) > self.THRESHOLDS.get(key, 0.01):
                 findings.append({
                     'level': '🔴 嚴重',
                     'desc': f'{label} = {p[key]*1000:+.1f} um（門檻 ±{self.THRESHOLDS[key]*1000:.0f} um）',
                     'impact': '工件圓度誤差、加工半徑偏移',
-                    'action': '→ 控制器輸入 X_OC/Y_OC 偏心補償，或機械調整夾頭',
+                    'action': '→ 控制器輸入 XOC/YOC 偏心補償，或機械調整夾頭',
                     'inst': 'LRT',
                 })
                 instruments.add('LRT')
 
-        # ── C/A 垂直度
-        if abs(p['A_OC']) > self.THRESHOLDS['A_OC']:
+        # ── C 軸偏擺 AOC
+        if abs(p.get('AOC', 0)) > self.THRESHOLDS['AOC']:
             findings.append({
                 'level': '🔴 嚴重',
-                'desc': f'C/A 垂直度誤差 A_OC = {np.degrees(p["A_OC"]):+.4f} deg',
+                'desc': f'C 軸偏擺 AOC = {np.degrees(p["AOC"]):+.4f} deg',
                 'impact': 'Z 向週期性誤差，影響輪廓精度與面粗度',
-                'action': '→ LRT 靜態量測確認，控制器輸入 A_OC 補償值',
+                'action': '→ LRT 靜態量測確認，控制器輸入 AOC 補償值',
                 'inst': 'LRT',
             })
             instruments.add('LRT')
-            instruments.add('Autocollimator')
 
-        # ── A 軸歪斜
-        if abs(p['B_OA']) > self.THRESHOLDS['B_OA']:
+        # ── C 軸偏擺 BOC
+        if abs(p.get('BOC', 0)) > self.THRESHOLDS['BOC']:
+            findings.append({
+                'level': '🔴 嚴重',
+                'desc': f'C 軸偏擺 BOC = {np.degrees(p["BOC"]):+.4f} deg',
+                'impact': 'X 向週期性誤差，影響圓弧輪廓',
+                'action': '→ LRT 靜態量測確認，控制器輸入 BOC 補償值',
+                'inst': 'LRT',
+            })
+            instruments.add('LRT')
+
+        # ── A 軸偏擺 BOA
+        if abs(p.get('BOA', 0)) > self.THRESHOLDS['BOA']:
             findings.append({
                 'level': '🟡 警告',
-                'desc': f'A 軸歪斜 B_OA = {np.degrees(p["B_OA"]):+.4f} deg',
+                'desc': f'A 軸偏擺 BOA = {np.degrees(p["BOA"]):+.4f} deg',
                 'impact': 'A 軸旋轉面不垂直，X 方向出現位移誤差',
                 'action': '→ 自準直儀靜態量測 A 軸安裝垂直度，機械調整或補償',
                 'inst': 'Autocollimator',
@@ -318,7 +396,7 @@ class AgentDiagnosticReport:
             instruments.add('Autocollimator')
 
         # ── 徑向跳動
-        avg_runout = (p['Runout_X_Amp'] + p['Runout_Y_Amp']) / 2 * 1000
+        avg_runout = (p.get('Runout_X_Amp', 0) + p.get('Runout_Y_Amp', 0)) / 2 * 1000
         if avg_runout > self.THRESHOLDS['Runout_1x']:
             findings.append({
                 'level': '🟡 警告',
@@ -330,7 +408,7 @@ class AgentDiagnosticReport:
             instruments.add('Spindle_Analyzer')
 
         # ── 軸向竄動
-        if p['Runout_Z_Amp'] * 1000 > self.THRESHOLDS['Runout_Z_2x']:
+        if p.get('Runout_Z_Amp', 0) * 1000 > self.THRESHOLDS['Runout_Z_2x']:
             findings.append({
                 'level': '🟡 警告',
                 'desc': (f'C 軸軸向竄動 {p["Runout_Z_Amp"]*1000:.1f} um，'
@@ -376,7 +454,7 @@ class AgentDiagnosticReport:
         for key in instruments:
             if key in self.INSTRUMENTS:
                 d = self.INSTRUMENTS[key]
-                print(f"\n  ✅ {d['name']}")
+                print(f"\n  {d['name']}")
                 print(f"     量測：{', '.join(d['measures'])}")
                 print(f"     精度：{d['accuracy']}   預計耗時：{d['time']}")
 
@@ -386,8 +464,5 @@ class AgentDiagnosticReport:
             print("  輸入特徵：(A角度, C角度, A速度方向, C速度方向, |速度|)")
             print("  輸出：    (DX_res, DY_res, DZ_res)")
             print("  建議模型：MLP (tanh) 或 Gaussian Process Regression")
-            print("  訓練數據：至少 5 組不同條件的 BK4 量測數據")
 
         print("\n" + "="*62)
-        print("  預估調機時間：傳統 5~7 天  →  本系統 ≤ 1 天")
-        print("="*62)

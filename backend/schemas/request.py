@@ -33,9 +33,9 @@ class AnalyzeRequest(BaseModel):
     run_ai_layer: bool = Field(True, description="是否執行 AI 殘差層")
 
     # ── upload 模式用（之後真實機台接入）──
-    dx: Optional[List[float]] = Field(None, description="量測 DX 序列 (m)")
-    dy: Optional[List[float]] = Field(None, description="量測 DY 序列 (m)")
-    dz: Optional[List[float]] = Field(None, description="量測 DZ 序列 (m)")
+    dx: Optional[List[float]] = Field(None, description="量測 DX 序列 (mm)")
+    dy: Optional[List[float]] = Field(None, description="量測 DY 序列 (mm)")
+    dz: Optional[List[float]] = Field(None, description="量測 DZ 序列 (mm)")
     a_cmd: Optional[List[float]] = Field(None, description="A軸指令序列 (rad)")
     c_cmd: Optional[List[float]] = Field(None, description="C軸指令序列 (rad)")
 
@@ -44,4 +44,8 @@ class ChatRequest(BaseModel):
     """聊天訊息請求"""
     message: str
     session_id: str = "default"
+    equipment_filters: Optional[List[str]] = Field(
+        None,
+        description="知識庫來源篩選，例如 ['LRT', 'Heidenhain']。None 或空 = 不限制"
+    )
     context: Optional[dict] = None

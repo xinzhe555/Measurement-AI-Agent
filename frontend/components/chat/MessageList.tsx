@@ -63,11 +63,10 @@ export function MessageList({ messages, isTyping }: Props) {
           <div className="flex flex-col gap-1.5 pt-1">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full border-2 border-sig-cyan border-t-transparent animate-spin"/>
-              <span className="font-sans text-[13px] font-bold text-tx-hi">PREC·OS Agent 正在進行物理推論...</span>
+              <span className="font-sans text-[13px] font-bold text-tx-hi">PREC·OS Agent 診斷中...</span>
             </div>
             <div className="font-mono text-[11px] text-tx-lo">
-              ▶ 正在解析自然語言並選擇診斷工具...<br/>
-              ▶ 準備呼叫 HTM 物理辨識引擎 / AI 殘差模型...
+              ▶ 正在根據辨識結果進行物理根因分析...
             </div>
           </div>
         </div>
